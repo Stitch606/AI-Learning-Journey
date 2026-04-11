@@ -1,4 +1,5 @@
 # Clinical Lab Tool - Beer-Lambert Law 
+try :
 Material = input("Name of material: ")
 
 numbers_of_samples = int(input("Numbers of samples: "))
@@ -11,6 +12,7 @@ low_limit = float(input("Lowest natural result: "))
 for i in range(numbers_of_samples):
     print(f"\n--- Sample {i+1} ---")
     Ab_S = float(input("Absorbance of sample: "))
+except :
     
     conc = (Ab_S / Ab_SD) * Conc_SD
     
