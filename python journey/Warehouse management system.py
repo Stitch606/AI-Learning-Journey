@@ -1,5 +1,5 @@
 from datetime import datetime
-print("Warehouse management")
+print("Warehouse_management")
 class Product_Management :
     def __init__(self,product,price,quantity) :
         self.product = product
