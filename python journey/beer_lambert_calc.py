@@ -1,18 +1,18 @@
 # Clinical Lab Tool - Beer-Lambert Law 
 try :
-Material = input("Name of material: ")
+    Material = input("Name of material: ")
 
-numbers_of_samples = int(input("Numbers of samples: "))
-Conc_SD = float(input("Concentration of SD: "))
-Ab_SD = float(input("Absorbance of SD: "))
+    numbers_of_samples = int(input("Numbers of samples: "))
+    Conc_SD = float(input("Concentration of SD: "))
+    Ab_SD = float(input("Absorbance of SD: "))
 
-high_limit = float(input("Highest natural result: "))
-low_limit = float(input("Lowest natural result: "))
-
-for i in range(numbers_of_samples):
-    print(f"\n--- Sample {i+1} ---")
-    Ab_S = float(input("Absorbance of sample: "))
-except :
+    high_limit = float(input("Highest natural result: "))
+    low_limit = float(input("Lowest natural result: "))
+    for i in range(numbers_of_samples):
+        print(f"\n--- Sample {i+1} ---")
+        Ab_S = float(input("Absorbance of sample: "))
+except:
+    print("Incorrect entry try again")
     
     conc = (Ab_S / Ab_SD) * Conc_SD
     
