@@ -7,3 +7,15 @@ The goal is to understand what happens behind the scenes ⚙️ instead of only 
 ---
 
 ## 🗺️ Learning Path
+
+🟢 Neural Network Fundamentals  
+        ↓  
+🧩 Perceptron  
+        ↓  
+🧠 MLP (Multi-Layer Perceptron)  
+        ↓  
+👁️ CNN (Convolutional Neural Networks)  
+        ↓  
+🏗️ Modern Architectures  
+        ↓  
+🤖 Transformers
