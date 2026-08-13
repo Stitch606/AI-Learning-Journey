@@ -1,0 +1,66 @@
+class CNN:
+    def __init__(self,img_array,learning_rate,layerdims):
+        self.learing_rate = learning_rate
+        self.layerdims = layerdims
+        self.img_array = img_array
+        self.filter_size = 3
+        self.filter_number = 32
+
+    def convolution(self):
+        if self.img_array.ndim != 2:
+            raise ValueError("Incorrect dimensions(2D)!")
+        num,s = self.filter_number,self.filter_size
+        kernels = np.random.randn(num, s, s)
+        kernels_moves = np.lib.stride_tricks.sliding_window_view(self.img_array,(s,s))
+        k = s*s
+        m = kernels_moves.shape[0] * kernels_moves.shape[1]
+        kernel = kernels.reshape(num,k).T
+        kernels_moves = kernels_moves.reshape(m,k)
+        self.feature_map = kernel @ kernels_moves
+        self.feature_map = self.feature_map.reshape(kernels_moves.shape[0],kernels_moves.shape[1],num)
+
+    def pooling_flatting(self, feature_map):
+        stride = filter_size
+        kernel_moves = np.lib.stride_tricks.sliding_window_view(feature_map,(filter_size,filter_size))
+        pool = np.max(kernel_moves, axis = (-2,-1))
+        self.flat_array = pool.reshape(-1,1)
+
+    def initialize_parameters(self):
+        self.weight = {}
+        self.bias = {}
+        self.num_layers = len(self.layer_dims)
+        for i in range(1, self.num_layers):
+            self.weight["w" + str(i)] = np.random.randn(layer_dims[i], layer_dims[i-1]) * 0.01
+            self.bias["b" + str(i)] = np.zeros((layer_dims[i], 1))
+
+    def forward_propagation(self, weight, baise):
+        self.inputs = {"w0": X}
+        num_layers = len(weight)
+        A_current = X.T
+        for i in range(1, num_layers):
+            w = weight["w" + str(i)]
+            b = bias["b" + str(i)]
+            Z = np.dot(w, A_current) + b
+            A_current = np.maximum(0, Z)
+            inputs["a" + str(i)] = A_current
+        self.w = weight["w" + str(num_layers)]
+        self.b = bias["b" + str(num_layers)]
+        output_layer = np.dot(w, A_current) + b
+        A_current = 1 / (1 + np.exp(-output_layer))
+        self.loss = A_current - self.y
+
+    def back_propagation(input,loss):
+        error = self.loss
+        n_layer = len(self.layerdims)
+        self.new_w = {}
+        self.new_b = {}
+        for i in range(n_layer,0,-1):
+            inpt = self.input[f"a{i-1}"]
+            w = self.w[f"w{i}"]
+            b = self.b[f"b{i}"]
+            gradient_w = np.dot(inpt,error)/inpt.shape[0]
+            gradient_b = np.sum(error, axis=1, keepdims=True)
+            self.new_w[f"w{i}"] = w-(lr * gradient_w)
+            self.new_b[f"b{i}"] = b-(lr * gradient_b)
+            error = np.dot(w.T,error)
+            error[inpt <= 0] = 0
