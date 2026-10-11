@@ -37,6 +37,7 @@ jobs:
         uses: flet-dev/flet-build-action@v1
         with:
           target: apk
+          working-directory: android_app
           runner-python-version: "3.12"
           bundled-python-version: "3.12"
           build-number: ${{ github.run_number }}
