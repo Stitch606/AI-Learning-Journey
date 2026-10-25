@@ -1,0 +1,31 @@
+[project]
+name = "human-action-detection"
+version = "1.0.0"
+description = "A neon-styled dashboard for real-time human action detection monitoring."
+requires-python = ">=3.12"
+authors = [
+    { name = "CONAN EDOJAWE", email = "bmhmdalfadl@gmail.com" }
+]
+dependencies = [
+    "flet",
+    "flet-charts",
+    "flet-video"
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli",
+    "flet-desktop",
+    "flet-web"
+]
+
+[tool.flet.metadata]
+title = "Human Action Detection"
+
+[tool.flet]
+org = "dev.flet"
+company = "CONAN EDOJA"
+copyright = "Copyright (C) 2026 by CONAN EDOJA"
+
+[tool.flet.app]
+path = "src"
