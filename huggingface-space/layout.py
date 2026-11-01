@@ -29,7 +29,7 @@ def create_layout():
                 with gr.Row(equal_height=False, elem_classes=["stage-grid"]):
                     with gr.Column(scale=8, min_width=0, elem_classes=["panel", "video-panel"]):
                         gr.HTML('<div class="panel-topline"><div><div class="eyebrow">01 / INPUT SOURCE</div><div class="section-title">Video monitor</div></div><span class="state-pill">● READY</span></div>')
-                        video = gr.Video(label="", sources=["upload", "webcam"], interactive=True, height=460, elem_classes=["video-input"])
+                        video = gr.Video(label="", sources=["upload", "webcam"], interactive=True, height=460, elem_id="video-stage", elem_classes=["video-input"])
                         video_status = gr.Markdown("**Ready for input.** Upload a video or choose Webcam from the source selector.", elem_classes=["status-message"])
                         with gr.Row(elem_classes=["video-actions"]):
                             start_btn = gr.Button("▶  Run analysis", variant="primary", elem_classes=["start-action"])
