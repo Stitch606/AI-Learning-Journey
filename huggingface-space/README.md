@@ -7,71 +7,82 @@ sdk: gradio
 sdk_version: 6.0.0
 app_file: app.py
 pinned: false
-short_description: Real-time human action detection dashboard (interface only)
+short_description: Responsive interactive human action detection dashboard
 ---
 
-# Human Action Detection - interface
+# Action Detector
 
-The page shows zeros until your code sends numbers. It does not process images and contains no AI.
+A responsive Gradio dashboard with an interactive video input, webcam source selection, model controls, analytics tabs, event log, and downloadable configuration report.
 
-## Files and what each one does
+## Current status
 
-| File | Job | Imports from this project |
-|---|---|---|
-| `state.py` | Holds the numbers. Your code writes here | none |
-| `view.py` | Turns the numbers into the page's HTML | none |
-| `gpu.py` | ZeroGPU helper: the `@gpu` decorator | none |
-| `style.css` | Colors and responsive layout | - |
-| `app.py` | Connects the files, refreshes the page once a second, starts it | gpu, state, view |
+The interface is ready. The computer-vision processor is intentionally not connected yet, so the statistics remain at zero and the Start Analysis action validates the selected video and reports that the AI processor is waiting. No sample detections are presented as real model output.
 
-Only `app.py` imports the other files. Your code imports `state` (and `gpu`, and `app` if it starts the page).
+## Project files
 
-## Connect your code
+| File | Purpose |
+|---|---|
+| `app.py` | Hugging Face Space entry point |
+| `main.py` | Builds the Gradio app and wires UI events |
+| `layout.py` | Dashboard, analytics, event log, and settings tabs |
+| `styles.py` | Neon theme and phone/tablet responsive CSS |
+| `callbacks.py` | Analysis adapter, reset, camera help, report export |
+| `charts.py` | Plotly activity and distribution charts |
+| `video_panel.py` | Video path handling and metadata inspection |
+| `gpu.py` | Optional ZeroGPU decorator helper |
 
-Your code sends values with `push`. Only the names you pass are changed:
+## Run locally
 
-```python
-from state import push
-
-push(connected=True, model_loaded=True,
-     people=3, actions=2, fps=24.1, runtime=elapsed_seconds, total=12,
-     distribution={"Walking": 60, "Running": 20, "Standing": 10, "Sitting": 5, "Falling": 5},
-     history=[(3, 1), (4, 2)],                       # one (people, actions) per second, last 60
-     log=[("14:32:12", 3, "Person 3 detected - Running (0.92)")],
-     rows=[(3, "Running", 0.92, "14:32:08")])
-```
-
-Allowed names: `connected`, `model`, `device`, `model_loaded`, `people`, `actions`, `fps`, `runtime`,
-`total`, `distribution`, `history`, `log`, `rows`. Any other name raises an error, so typos show up immediately.
-
-To start the page from your own file and keep your code running:
-
-```python
-import app
-app.launch(block=False)
-# your loop: push(...)
-```
-
-To run the page alone (it shows zeros): `python app.py`
-
-## Run in Colab or on your computer
-
-```
-pip install gradio
+```bash
+pip install -r requirements.txt
 python app.py
 ```
 
-## Put it on a Hugging Face Space
+## Connect the vision model
 
-1. Create a new Space, choose **Gradio** as the SDK. The page itself needs no GPU, so the free CPU hardware is enough.
-2. Upload: `app.py`, `state.py`, `view.py`, `gpu.py`, `style.css`, `README.md`, `requirements.txt`.
-   The block of settings at the top of this README (between the `---` lines) is what Hugging Face reads.
-3. If you want a different Gradio version, change `sdk_version` in that block. Do **not** put `gradio` in `requirements.txt`; `sdk_version` installs it.
-4. If your own code must run on the Space, make your own file (for example `run.py`) that imports `app`, starts your loop, and calls `app.launch()`. Then set `app_file: run.py` above.
+Implement a processor function and pass it to `build_app(processor=your_processor)` from `main.py` or a custom entry point.
 
-### ZeroGPU
+The processor is called with:
 
-- Choose **ZeroGPU** as the Space hardware. `gpu.py` already contains one small `@gpu` function, because ZeroGPU refuses to start a Space with none ("No @spaces.GPU function detected during startup").
-- Put `@gpu` on the functions of your code that need the GPU (see `gpu.py`). The GPU is given only while such a function runs, then released.
-- Because of that, a background loop cannot hold the GPU. The model call should be a function with `@gpu` that is called from a Gradio event (a button, a camera frame, a file upload), not from a thread that runs forever.
-- Outside ZeroGPU (Colab, your computer, normal Spaces) `@gpu` does nothing, so the same code runs everywhere.
+```python
+processor(
+    video_path=video_path,
+    threshold=threshold,
+    model=model,
+    device=device
+)
+```
+
+It should return a dictionary with these fields:
+
+```python
+{
+    "people": 0,
+    "actions": 0,
+    "falls": 0,
+    "collisions": 0,
+    "walking": 0,
+    "standing": 0,
+    "lifting": 0,
+    "falling": 0,
+    "timestamps": [],
+    "walking_history": [],
+    "standing_history": [],
+    "lifting_history": [],
+    "falling_history": [],
+    "events": [
+        {"action": "Walking", "confidence": 0.92, "time": "14:32:12"}
+    ]
+}
+```
+
+Action values are percentages from 0 to 100. History arrays should align with `timestamps`. Event entries use `action`, `confidence`, and `time`.
+
+The current callback processes a selected video when the processor is supplied. For a live streaming pipeline, we will add a frame-by-frame streaming callback when the model interface is available.
+
+## Notes
+
+- Video upload and webcam selection are provided by the Gradio video input.
+- The downloadable CSV currently reports the selected video and model settings. It will include detection results once the processor is connected.
+- The Reset Dashboard button clears displayed metrics; it does not interrupt an active model call.
+- Free CPU hardware is sufficient to preview the interface. Choose suitable GPU hardware when the model is connected.
