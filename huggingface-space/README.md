@@ -4,7 +4,7 @@ emoji: 🎯
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
-sdk_version: 6.0.0
+sdk_version: 6.31.0
 app_file: app.py
 pinned: false
 short_description: Responsive interactive human action detection dashboard
@@ -45,43 +45,14 @@ Implement a processor function and pass it to `build_app(processor=your_processo
 The processor is called with:
 
 ```python
-processor(
-    video_path=video_path,
-    threshold=threshold,
-    model=model,
-    device=device
-)
+processor(video_path=video_path, threshold=threshold, model=model, device=device)
 ```
 
-It should return a dictionary with these fields:
-
-```python
-{
-    "people": 0,
-    "actions": 0,
-    "falls": 0,
-    "collisions": 0,
-    "walking": 0,
-    "standing": 0,
-    "lifting": 0,
-    "falling": 0,
-    "timestamps": [],
-    "walking_history": [],
-    "standing_history": [],
-    "lifting_history": [],
-    "falling_history": [],
-    "events": [
-        {"action": "Walking", "confidence": 0.92, "time": "14:32:12"}
-    ]
-}
-```
-
-Action values are percentages from 0 to 100. History arrays should align with `timestamps`. Event entries use `action`, `confidence`, and `time`.
-
-The current callback processes a selected video when the processor is supplied. For a live streaming pipeline, we will add a frame-by-frame streaming callback when the model interface is available.
+It should return a dictionary with `people`, `actions`, `falls`, `collisions`, the four action percentages, aligned time-series arrays, and an `events` list containing action, confidence, and time.
 
 ## Notes
 
+- Gradio is provided by the Hugging Face Gradio SDK version declared above; do not pin a second Gradio version in requirements.
 - Video upload and webcam selection are provided by the Gradio video input.
 - The downloadable CSV currently reports the selected video and model settings. It will include detection results once the processor is connected.
 - The Reset Dashboard button clears displayed metrics; it does not interrupt an active model call.
