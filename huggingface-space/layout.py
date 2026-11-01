@@ -15,7 +15,7 @@ def create_layout():
                         progress = gr.Slider(0, 100, value=0, label="Analysis progress", interactive=False)
                         with gr.Row():
                             start_btn = gr.Button("▶  Start Analysis", variant="primary", elem_classes=["start-action"])
-                            stop_btn = gr.Button("■  Stop / Reset", variant="stop", elem_classes=["stop-action"])
+                            stop_btn = gr.Button("↺  Reset Dashboard", variant="stop", elem_classes=["stop-action"])
                     with gr.Column(scale=3, min_width=220, elem_classes=["panel", "stats-panel"]):
                         gr.HTML('<div class="section-heading">LIVE STATISTICS</div>')
                         with gr.Row():
