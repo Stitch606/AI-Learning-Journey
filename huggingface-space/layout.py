@@ -1,65 +1,91 @@
 import gradio as gr
 
+
 def create_layout():
-    with gr.Blocks(title="Action Detector") as demo:
+    with gr.Blocks(title="Action Detector", elem_classes=["action-app"]) as demo:
         gr.HTML("""
-        <header class="app-header"><div class="brand"><div class="brand-mark">🏃</div><div><div class="brand-title">ACTION <span>DETECTOR</span></div><div class="brand-subtitle">Detect · Track · Analyze · Stay Safe</div></div></div><div class="system-status"><span class="status-dot"></span><span>INTERFACE ONLINE</span><small>AI ENGINE WAITING</small></div></header>
+        <header class="hero-header">
+          <div class="hero-brand">
+            <div class="brand-symbol"><span>AD</span><i></i></div>
+            <div class="brand-copy">
+              <div class="eyebrow">COMPUTER VISION PLATFORM</div>
+              <div class="brand-title">ACTION<span> DETECTOR</span></div>
+              <div class="brand-subtitle">Understand movement. Detect risk. See every moment.</div>
+            </div>
+          </div>
+          <div class="header-meta">
+            <div class="engine-chip"><span class="pulse-dot"></span><span>ENGINE STANDBY</span></div>
+            <div class="version-label">VISION WORKSPACE <b>01</b></div>
+          </div>
+        </header>
+        <div class="welcome-row">
+          <div><div class="eyebrow">WORKSPACE / OVERVIEW</div><h1>Activity dashboard</h1><p>Upload a clip or connect a camera to begin your analysis.</p></div>
+          <div class="workspace-tag"><span class="tiny-square"></span> LOCAL SESSION</div>
+        </div>
         """)
         with gr.Tabs(elem_classes=["app-tabs"]):
-            with gr.Tab("⌂  Dashboard", id="dashboard"):
+            with gr.Tab("◫  Overview", id="dashboard"):
                 with gr.Row(equal_height=False, elem_classes=["top-grid"]):
                     with gr.Column(scale=7, min_width=0, elem_classes=["panel", "video-panel"]):
-                        gr.HTML('<div class="section-heading"><span class="heading-icon">▣</span> LIVE VIDEO ANALYSIS <span class="live-pill">READY</span></div>')
-                        video = gr.Video(label="", sources=["upload", "webcam"], interactive=True, height=360, elem_classes=["video-input"])
-                        video_status = gr.Markdown("**Ready.** Upload a video or choose Webcam in the video source menu.", elem_classes=["status-message"])
-                        progress = gr.Slider(0, 100, value=0, label="Analysis progress", interactive=False)
-                        with gr.Row():
-                            start_btn = gr.Button("▶  Start Analysis", variant="primary", elem_classes=["start-action"])
-                            stop_btn = gr.Button("↺  Reset Dashboard", variant="stop", elem_classes=["stop-action"])
-                    with gr.Column(scale=3, min_width=220, elem_classes=["panel", "stats-panel"]):
-                        gr.HTML('<div class="section-heading">LIVE STATISTICS</div>')
-                        with gr.Row():
-                            people = gr.Number(0, label="👤 People", interactive=False)
-                            actions = gr.Number(0, label="🏃 Actions", interactive=False)
-                        with gr.Row():
-                            falls = gr.Number(0, label="⚠️ Falls", interactive=False)
-                            collisions = gr.Number(0, label="🛡️ Collisions", interactive=False)
-                        gr.HTML('<div class="waiting-note">Statistics update when the vision model is connected.</div>')
-                with gr.Row(equal_height=False):
-                    with gr.Column(scale=1, min_width=0, elem_classes=["panel"]):
-                        gr.HTML('<div class="section-heading">DETECTED ACTIONS</div>')
-                        walking = gr.Slider(0, 100, value=0, label="🚶 Walking", interactive=False)
-                        standing = gr.Slider(0, 100, value=0, label="🧍 Standing", interactive=False)
-                        lifting = gr.Slider(0, 100, value=0, label="🏋️ Lifting", interactive=False)
-                        falling = gr.Slider(0, 100, value=0, label="🚨 Fall", interactive=False)
-                    with gr.Column(scale=1, min_width=0, elem_classes=["panel", "controls-panel"]):
-                        gr.HTML('<div class="section-heading">VIDEO & MODEL CONTROLS</div>')
-                        threshold = gr.Slider(0, 1, value=0.25, step=0.01, label="Confidence threshold")
-                        with gr.Row():
-                            model = gr.Dropdown(["YOLOv8", "YOLO11", "YOLO26"], value="YOLOv8", label="Detection model")
-                            device = gr.Dropdown(["Auto (CPU)", "CPU", "CUDA"], value="Auto (CPU)", label="Device")
-                        camera_btn = gr.Button("📷  Camera help", variant="secondary")
-                        download_btn = gr.DownloadButton("⬇  Download analysis report", variant="secondary")
-                        clear_btn = gr.Button("↺  Clear selected video", variant="secondary")
-            with gr.Tab("▥  Analytics", id="analytics"):
-                with gr.Row():
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">INPUT SOURCE</div><div class="section-title">Video monitor</div></div><span class="state-pill">● READY</span></div>')
+                        video = gr.Video(label="", sources=["upload", "webcam"], interactive=True, height=390, elem_classes=["video-input"])
+                        video_status = gr.Markdown("**Ready for input.** Upload a video or choose Webcam from the source selector.", elem_classes=["status-message"])
+                        with gr.Row(elem_classes=["video-actions"]):
+                            start_btn = gr.Button("▶  Run analysis", variant="primary", elem_classes=["start-action"])
+                            stop_btn = gr.Button("↺  Reset", variant="secondary", elem_classes=["stop-action"])
+                        progress = gr.Slider(0, 100, value=0, label="PROCESSING PROGRESS", interactive=False, elem_classes=["progress-control"])
+                    with gr.Column(scale=5, min_width=250, elem_classes=["panel", "insights-panel"]):
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">LIVE METRICS</div><div class="section-title">Detection summary</div></div><span class="metric-caption">SESSION</span></div>')
+                        with gr.Row(elem_classes=["metric-row"]):
+                            people = gr.Number(0, label="PEOPLE TRACKED", interactive=False, elem_classes=["metric-card", "metric-cyan"])
+                            actions = gr.Number(0, label="ACTIONS FOUND", interactive=False, elem_classes=["metric-card", "metric-violet"])
+                        with gr.Row(elem_classes=["metric-row"]):
+                            falls = gr.Number(0, label="FALL ALERTS", interactive=False, elem_classes=["metric-card", "metric-rose"])
+                            collisions = gr.Number(0, label="COLLISIONS", interactive=False, elem_classes=["metric-card", "metric-amber"])
+                        gr.HTML("""
+                        <div class="insight-note">
+                          <div class="note-icon">✦</div><div><b>Waiting for your model</b><span>Metrics will populate when the vision processor is connected.</span></div>
+                        </div>
+                        <div class="mini-divider"></div>
+                        <div class="quick-facts"><div><span>INPUT</span><b>Video / Webcam</b></div><div><span>OUTPUT</span><b>Actions & events</b></div></div>
+                        """)
+                with gr.Row(equal_height=False, elem_classes=["lower-grid"]):
+                    with gr.Column(scale=6, min_width=0, elem_classes=["panel", "action-panel"]):
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">CLASSIFICATION</div><div class="section-title">Action breakdown</div></div><span class="metric-caption">CONFIDENCE</span></div>')
+                        walking = gr.Slider(0, 100, value=0, label="🚶  Walking", interactive=False)
+                        standing = gr.Slider(0, 100, value=0, label="🧍  Standing", interactive=False)
+                        lifting = gr.Slider(0, 100, value=0, label="🏋  Lifting", interactive=False)
+                        falling = gr.Slider(0, 100, value=0, label="⚠  Fall", interactive=False)
+                    with gr.Column(scale=6, min_width=0, elem_classes=["panel", "controls-panel"]):
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">CONFIGURATION</div><div class="section-title">Analysis controls</div></div><span class="metric-caption">ADJUSTABLE</span></div>')
+                        threshold = gr.Slider(0, 1, value=0.25, step=0.01, label="CONFIDENCE THRESHOLD")
+                        with gr.Row(elem_classes=["select-row"]):
+                            model = gr.Dropdown(["YOLOv8", "YOLO11", "YOLO26"], value="YOLOv8", label="DETECTION MODEL")
+                            device = gr.Dropdown(["Auto (CPU)", "CPU", "CUDA"], value="Auto (CPU)", label="PROCESSING DEVICE")
+                        with gr.Row(elem_classes=["utility-actions"]):
+                            camera_btn = gr.Button("▣  Camera help", variant="secondary")
+                            clear_btn = gr.Button("⌫  Clear video", variant="secondary")
+                        download_btn = gr.DownloadButton("↓  Export session report", variant="secondary", elem_classes=["download-action"])
+            with gr.Tab("▤  Analytics", id="analytics"):
+                with gr.Row(equal_height=False, elem_classes=["analytics-grid"]):
                     with gr.Column(elem_classes=["panel"], min_width=0):
-                        gr.HTML('<div class="section-heading">ACTIONS OVER TIME</div>')
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">TEMPORAL ANALYSIS</div><div class="section-title">Actions over time</div></div></div>')
                         chart = gr.Plot(label="", show_label=False)
                     with gr.Column(elem_classes=["panel"], min_width=0):
-                        gr.HTML('<div class="section-heading">ACTION DISTRIBUTION</div>')
+                        gr.HTML('<div class="panel-topline"><div><div class="eyebrow">CLASS DISTRIBUTION</div><div class="section-title">Action distribution</div></div></div>')
                         distribution = gr.Plot(label="", show_label=False)
-            with gr.Tab("☷  Event Log", id="events"):
-                with gr.Column(elem_classes=["panel"]):
-                    gr.HTML('<div class="section-heading">RECENT DETECTION EVENTS</div>')
+            with gr.Tab("☷  Event log", id="events"):
+                with gr.Column(elem_classes=["panel", "events-panel"]):
+                    gr.HTML('<div class="panel-topline"><div><div class="eyebrow">DETECTION HISTORY</div><div class="section-title">Recent events</div></div><span class="metric-caption">LATEST FIRST</span></div>')
                     events = gr.Dataframe(headers=["Action", "Confidence", "Time"], datatype=["str", "str", "str"], value=[], interactive=False, label="")
-                    gr.Markdown("Events will appear here after the model processes a video.")
+                    gr.Markdown("Events will appear here after the model processes a video.", elem_classes=["empty-events"])
             with gr.Tab("⚙  Settings", id="settings"):
-                with gr.Column(elem_classes=["panel"]):
-                    gr.HTML('<div class="section-heading">APPLICATION SETTINGS</div>')
-                    gr.Markdown("**Model connection**\n\nThe dashboard is in interface mode. Connect your vision processor through build_app(processor=...).")
-                    gr.Markdown("**Available controls**\n\nConfidence threshold, model selection, and device selection are passed to the processor callback.")
-                    gr.Markdown("**Responsive layout**\n\nPanels rearrange into a single-column layout on phone screens.")
+                with gr.Column(elem_classes=["panel", "settings-panel"]):
+                    gr.HTML('<div class="eyebrow">WORKSPACE PREFERENCES</div><div class="section-title">Application settings</div>')
+                    gr.Markdown("**Model connection**\n\nThe dashboard is ready for your vision processor. Connect it through build_app(processor=...).")
+                    gr.Markdown("**Analysis parameters**\n\nConfidence threshold, model selection, and processing device are passed to the processor callback.")
+                    gr.Markdown("**Responsive interface**\n\nThe workspace rearranges its panels for phone and tablet screens.")
+        gr.HTML('<footer class="app-footer"><span> ACTION DETECTOR <b> / </b> COMPUTER VISION WORKSPACE</span><span>BUILT FOR REAL-TIME INSIGHT <i>✦</i></span></footer>')
     return {
         "demo": demo, "video": video, "video_status": video_status, "progress": progress,
         "people": people, "actions": actions, "falls": falls, "collisions": collisions,
