@@ -1,7 +1,7 @@
 import gradio as gr
 
 def create_layout():
-    with gr.Blocks(title="Action Detector", theme=gr.themes.Base()) as demo:
+    with gr.Blocks(title="Action Detector") as demo:
         gr.HTML("""
         <header class="app-header"><div class="brand"><div class="brand-mark">🏃</div><div><div class="brand-title">ACTION <span>DETECTOR</span></div><div class="brand-subtitle">Detect · Track · Analyze · Stay Safe</div></div></div><div class="system-status"><span class="status-dot"></span><span>INTERFACE ONLINE</span><small>AI ENGINE WAITING</small></div></header>
         """)
