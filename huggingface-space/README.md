@@ -11,4 +11,4 @@ pinned: false
 
 This Space is connected to the GitHub repository `Stitch606/AI-Learning-Journey`.
 
-The application files will be added here later.
+The application files will be added here in a later commit.
