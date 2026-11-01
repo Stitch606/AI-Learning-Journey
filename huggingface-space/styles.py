@@ -144,4 +144,51 @@ input[type=range] {accent-color:#e09aff !important}
  .workspace-tag {align-self:flex-start}.app-tabs button[role=tab] {padding:9px 7px !important;font-size:9px !important}
  .session-info-grid {grid-template-columns:1fr}
 }
+
+/* Native Gradio video: replace the default white upload/player surfaces */
+#video-stage {
+  width:100% !important; min-height:460px !important; padding:0 !important;
+  border:1px solid #bd79e8 !important; border-radius:15px !important; overflow:hidden !important;
+  background:radial-gradient(ellipse at 50% 0%,#743c9c55 0%,transparent 65%),linear-gradient(145deg,#241337,#160d25) !important;
+  box-shadow:inset 0 0 35px #a33fe51c,0 0 18px #bd4cff20 !important;
+}
+#video-stage > div,#video-stage .wrap,#video-stage .video-container,
+#video-stage .upload-container,#video-stage .empty,#video-stage [data-testid="video"],
+#video-stage [data-testid="video-upload"],#video-stage .drop-zone {
+  background-color:transparent !important; color:#f8edff !important;
+  border-color:#80519d !important; box-shadow:none !important;
+}
+#video-stage .upload-container,#video-stage .drop-zone,#video-stage [data-testid="video-upload"] {
+  min-height:420px !important; border:1px dashed #bd79e8 !important; border-radius:13px !important;
+  background:radial-gradient(ellipse at center,#743c9c30 0%,transparent 68%),linear-gradient(145deg,#28163d,#1b102b) !important;
+  transition:background .2s ease,border-color .2s ease,box-shadow .2s ease !important;
+}
+#video-stage .upload-container:hover,#video-stage .drop-zone:hover,#video-stage [data-testid="video-upload"]:hover {
+  border-color:#edb4ff !important;
+  background:radial-gradient(ellipse at center,#a64ce84a 0%,transparent 72%),#28163d !important;
+  box-shadow:inset 0 0 30px #c14aff22,0 0 18px #bd4cff2b !important;
+}
+#video-stage button,#video-stage [role="button"] {
+  color:#fff !important; background:linear-gradient(120deg,#71349a,#4c286d) !important;
+  border:1px solid #ae75ce !important; border-radius:9px !important; box-shadow:0 0 12px #a94ce52b !important;
+}
+#video-stage button:hover,#video-stage [role="button"]:hover {
+  background:linear-gradient(120deg,#9846c6,#65328b) !important; border-color:#e5b0ff !important;
+}
+#video-stage svg {color:#e8b5ff !important}
+#video-stage p,#video-stage span,#video-stage label,#video-stage small {color:#ead9f5 !important}
+#video-stage video {
+  display:block !important; width:100% !important; max-height:460px !important;
+  object-fit:contain !important; background:#10091b !important; border-radius:12px !important;
+}
+#video-stage input,#video-stage [type=file] {color:#f8edff !important}
+#video-stage [data-testid="file-upload"],#video-stage .file-preview,#video-stage .thumbnail-item {
+  background:#29163e !important; border:1px solid #80519d !important; border-radius:10px !important;
+}
+@media(max-width:700px) {
+  #video-stage {min-height:280px !important}
+  #video-stage .upload-container,#video-stage .drop-zone,#video-stage [data-testid="video-upload"] {min-height:260px !important}
+  #video-stage video {max-height:280px !important}
+}
+
 """
