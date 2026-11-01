@@ -1,0 +1,25 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "huggingface-space/**"
+      - ".github/workflows/sync-to-hub.yml"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Sync files to Hugging Face
+        uses: huggingface/hub-sync@v0.3.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: Conan112299/actions_detection
+          hf_token: ${{ secrets.HF_TOKEN }}
+          subdirectory: huggingface-space
+          space_sdk: gradio
