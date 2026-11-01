@@ -85,7 +85,7 @@ def create_layout():
                     gr.Markdown("**Model connection**\n\nThe dashboard is ready for your vision processor. Connect it through build_app(processor=...).")
                     gr.Markdown("**Analysis parameters**\n\nConfidence threshold, model selection, and processing device are passed to the processor callback.")
                     gr.Markdown("**Responsive interface**\n\nThe workspace rearranges its panels for phone and tablet screens.")
-        gr.HTML('<div class="app-footer"><span> ACTION DETECTOR <b> / </b> COMPUTER VISION WORKSPACE</span><span>BUILT FOR REAL-TIME INSIGHT <i>✦</i></span></footer>')
+        gr.HTML('<div class="app-footer"><span> ACTION DETECTOR <b> / </b> COMPUTER VISION WORKSPACE</span><span>BUILT FOR REAL-TIME INSIGHT <i>✦</i></span></div>')
     return {
         "demo": demo, "video": video, "video_status": video_status, "progress": progress,
         "people": people, "actions": actions, "falls": falls, "collisions": collisions,
