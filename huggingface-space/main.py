@@ -1,3 +1,4 @@
+import spaces
 import gradio as gr
 from layout import create_layout
 from callbacks import run_analysis, reset_dashboard, camera_help, clear_video, export_report
@@ -14,12 +15,13 @@ def build_app(processor=None):
         ui["events"],
     ]
 
+    # ZeroGPU requires the actual Gradio event handler to be decorated.
+    # On CPU and regular GPU hardware, spaces.GPU is a no-op.
+    @spaces.GPU(duration=60)
     def start(video, threshold, model, device):
         return run_analysis(video, threshold, model, device, processor=processor)
 
-    # Re-enter the Blocks context before registering event listeners.
-    # Components were created by create_layout(), so Gradio needs this
-    # context active when .click() and .clear() are called.
+    # Register event listeners while the Blocks context is active.
     with demo:
         ui["start_btn"].click(
             fn=start,
