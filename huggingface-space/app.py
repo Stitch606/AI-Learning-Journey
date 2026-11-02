@@ -1,15 +1,54 @@
-from main import build_app
-from styles import CSS
-from pathlib import Path
+import gradio as gr
+from gpu import gpu_ready
 
-demo = build_app()
+custom_css = """
+:root {
+    --bg-color: #030712;
+    --card-bg: rgba(15, 23, 42, 0.85);
+    --border-glow: #00f0ff;
+    --accent-purple: #a855f7;
+    --text-main: #f8fafc;
+}
 
-# Inject ordinary browser-side interactions after the Gradio app mounts.
-INTERACTIONS_JS = Path(__file__).with_name("interactions.js").read_text(encoding="utf-8")
+body, .gradio-container {
+    background-color: var(--bg-color) !important;
+    color: var(--text-main) !important;
+    font-family: 'Segoe UI', system-ui, sans-serif !important;
+}
 
-# Gradio event listeners must be registered inside the Blocks context.
-with demo:
-    demo.load(fn=None, js=INTERACTIONS_JS)
+.cyber-frame {
+    background: var(--card-bg) !important;
+    border: 2px solid var(--border-glow) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 0 25px rgba(0, 240, 255, 0.35), inset 0 0 20px rgba(0, 240, 255, 0.1) !important;
+    backdrop-filter: blur(12px) !important;
+    padding: 20px !important;
+}
+
+.cyber-btn {
+    border: 1px solid var(--border-glow) !important;
+    background: rgba(0, 240, 255, 0.15) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 0 12px rgba(0, 240, 255, 0.25) !important;
+    transition: all 0.2s ease !important;
+}
+
+.cyber-btn:hover {
+    background: var(--border-glow) !important;
+    color: #000 !important;
+    box-shadow: 0 0 20px var(--border-glow) !important;
+}
+"""
+
+with gr.Blocks(css=custom_css) as demo:
+    with gr.Column(elem_classes="cyber-frame"):
+        video_output = gr.Video(label="Cyber Video Stream", interactive=False)
+
+        with gr.Row():
+            upload_btn = gr.Button("Upload Video", elem_classes="cyber-btn")
+            camera_btn = gr.Button("Open Camera", elem_classes="cyber-btn")
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False, css=CSS)
+    demo.launch()
