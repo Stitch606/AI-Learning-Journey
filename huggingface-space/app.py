@@ -67,8 +67,8 @@ body, .gradio-container {
 .cyber-frame {
     width: 100% !important;
     max-width: 1500px !important;
-    width: min(100%, calc((100dvh - 112px) * 9 / 11)) !important;
-    aspect-ratio: 9 / 11 !important;
+    width: min(100%, calc((100dvh - 112px) * 9 / 12)) !important;
+    aspect-ratio: 9 / 12 !important;
     height: auto !important;
     min-height: 0 !important;
     flex: 0 0 auto !important;
@@ -126,8 +126,8 @@ body, .gradio-container {
     }
 
     .cyber-frame {
-        width: min(100%, calc((100dvh - 78px) * 9 / 11)) !important;
-        aspect-ratio: 9 / 11 !important;
+        width: min(100%, calc((100dvh - 78px) * 9 / 12)) !important;
+        aspect-ratio: 9 / 12 !important;
         height: auto !important;
         padding: 5px !important;
         border-radius: 12px !important;
