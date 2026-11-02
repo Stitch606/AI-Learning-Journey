@@ -1,6 +1,6 @@
 import gradio as gr
-from gpu import gpu_ready
 
+# Custom CSS for the cyber neon design and fixed indigo background
 custom_css = """
 :root {
     --bg-color: #030712;
@@ -16,15 +16,19 @@ body, .gradio-container {
     font-family: 'Segoe UI', system-ui, sans-serif !important;
 }
 
+/* Neon video frame with preserved dimensions and stability */
 .cyber-frame {
     background: var(--card-bg) !important;
     border: 2px solid var(--border-glow) !important;
     border-radius: 16px !important;
     box-shadow: 0 0 25px rgba(0, 240, 255, 0.35), inset 0 0 20px rgba(0, 240, 255, 0.1) !important;
     backdrop-filter: blur(12px) !important;
-    padding: 20px !important;
+    padding: 16px !important;
+    max-width: 600px !important;
+    margin: 0 auto !important;
 }
 
+/* Cyber neon buttons */
 .cyber-btn {
     border: 1px solid var(--border-glow) !important;
     background: rgba(0, 240, 255, 0.15) !important;
@@ -44,71 +48,26 @@ body, .gradio-container {
 
 with gr.Blocks(css=custom_css) as demo:
     with gr.Column(elem_classes="cyber-frame"):
+        # Video player or live display inside the same frame
         video_output = gr.Video(
             label="Cyber Video Stream",
-            sources=["upload"],
-            interactive=True,
-            height=360,
+            interactive=False
         )
 
+        # Controls: upload a video or open the front camera
         with gr.Row():
-            upload_btn = gr.Button("📁 Upload Video", elem_classes="cyber-btn")
-            camera_btn = gr.Button("📷 Open Camera", elem_classes="cyber-btn")
+            upload_input = gr.File(
+                label="Upload Video",
+                file_types=["video"],
+                elem_classes="cyber-btn"
+            )
+            camera_btn = gr.Button(
+                "📷 Live Camera",
+                elem_classes="cyber-btn"
+            )
 
-    camera_choice = gr.Radio(
-        choices=["Front Camera", "Rear Camera"],
-        value="Front Camera",
-        label="Switch Camera",
-    )
-
-    camera_front = gr.Video(
-        label="Record from Front Camera",
-        sources=["webcam"],
-        webcam_options=gr.WebcamOptions(
-            mirror=True,
-            constraints={"facingMode": "user"},
-        ),
-        interactive=True,
-        height=360,
-        visible=False,
-    )
-
-    camera_rear = gr.Video(
-        label="Record from Rear Camera",
-        sources=["webcam"],
-        webcam_options=gr.WebcamOptions(
-            mirror=False,
-            constraints={"facingMode": "environment"},
-        ),
-        interactive=True,
-        height=360,
-        visible=False,
-    )
-
-    upload_btn.click(
-        fn=lambda: (gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)),
-        inputs=None,
-        outputs=[video_output, camera_front, camera_rear],
-    )
-
-    camera_btn.click(
-        fn=lambda choice: (
-            gr.update(visible=False),
-            gr.update(visible=choice == "Front Camera"),
-            gr.update(visible=choice == "Rear Camera"),
-        ),
-        inputs=camera_choice,
-        outputs=[video_output, camera_front, camera_rear],
-    )
-
-    camera_choice.change(
-        fn=lambda choice: (
-            gr.update(visible=choice == "Front Camera"),
-            gr.update(visible=choice == "Rear Camera"),
-        ),
-        inputs=camera_choice,
-        outputs=[camera_front, camera_rear],
-    )
+        # Display the uploaded video immediately in the video player
+        upload_input.change(fn=lambda x: x, inputs=upload_input, outputs=video_output)
 
 if __name__ == "__main__":
     demo.launch()
