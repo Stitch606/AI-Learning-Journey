@@ -1,4 +1,4 @@
-(() => {
+() => {
   const root = document.querySelector('.action-app');
   if (!root || root.dataset.interactionsReady === '1') return;
   root.dataset.interactionsReady = '1';
@@ -51,4 +51,4 @@
       setTimeout(() => ripple.remove(), 550);
     });
   });
-})();
+}
