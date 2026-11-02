@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080b18">
+  <title>Actions Detection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Actions Detection home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span class="brand-name">SENTINEL<span> / VISION</span></span>
+      </a>
+      <div class="top-meta">
+        <span class="system-dot"></span>
+        <span>VISION SYSTEM</span>
+        <span class="meta-divider"></span>
+        <span class="mono">BUILD 01.01</span>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <div class="intro">
+        <div>
+          <div class="eyebrow"><span class="eyebrow-line"></span> COMPUTER VISION PLATFORM</div>
+          <h1>Actions <span>Detection</span></h1>
+          <p class="subtitle">Human activity monitoring workspace</p>
+        </div>
+        <div class="session-chip"><span class="pulse"></span> SESSION READY</div>
+      </div>
+
+      <nav class="mode-switch" aria-label="Input mode">
+        <button class="mode-btn active" id="liveMode" type="button" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><path d="m9 5 1-2h4l1 2M9.5 12a2.5 2.5 0 1 0 5 0 2.5 2.5 0 0 0-5 0Z"/></svg>
+          <span>Live camera</span>
+        </button>
+        <button class="mode-btn" id="videoMode" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+          <span>Video file</span>
+        </button>
+        <div class="mode-indicator" id="modeIndicator"></div>
+      </nav>
+
+      <section class="monitor" aria-label="Video input monitor">
+        <div class="monitor-head">
+          <div class="monitor-label"><span class="live-led" id="monitorLed"></span><span id="monitorTitle">LIVE INPUT</span></div>
+          <span class="monitor-code mono" id="monitorCode">CAM / 01</span>
+        </div>
+        <div class="viewport" id="viewport">
+          <div class="grid-overlay"></div>
+          <div class="corner corner-tl"></div><div class="corner corner-tr"></div>
+          <div class="corner corner-bl"></div><div class="corner corner-br"></div>
+          <video id="cameraPreview" autoplay muted playsinline></video>
+          <video id="filePreview" controls playsinline></video>
+          <div class="empty-state" id="emptyState">
+            <div class="camera-symbol">
+              <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="13" width="36" height="25" rx="5"/><circle cx="24" cy="25.5" r="7"/><path d="m15 13 3-5h12l3 5"/></svg>
+            </div>
+            <strong id="emptyTitle">Camera is standing by</strong>
+            <span id="emptyDescription">Start your camera to preview a live feed</span>
+            <button class="primary-btn compact" id="startCamera" type="button">
+              <span class="btn-icon">◉</span> Start camera
+            </button>
+            <label class="drop-hint" id="dropHint" for="videoInput">or <span>choose a video file</span></label>
+          </div>
+          <div class="viewport-footer"><span>INPUT PREVIEW</span><span class="mono" id="viewportResolution">AWAITING SOURCE</span></div>
+        </div>
+        <div class="monitor-foot">
+          <div class="source-info"><span class="source-icon">◈</span><span id="sourceName">No input source selected</span></div>
+          <label class="file-btn" id="chooseFile" for="videoInput">Choose video <span>↗</span></label>
+          <input id="videoInput" type="file" accept="video/*" hidden>
+        </div>
+      </section>
+
+      <div class="action-row">
+        <div class="readiness">
+          <span class="readiness-icon">i</span>
+          <div><strong>Detection pipeline</strong><small id="pipelineStatus">Waiting for model connection</small></div>
+        </div>
+        <button class="primary-btn analyze-btn" id="analyzeButton" type="button" disabled>
+          Analyze input <span class="arrow">→</span>
+        </button>
+      </div>
+
+      <div class="notice" id="notice" role="status" aria-live="polite">
+        <span class="notice-mark">!</span>
+        <span id="noticeText">Interface online. Connect your detection pipeline to enable analysis.</span>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span> SENTINEL VISION <span class="footer-muted">· HUMAN ACTION ANALYSIS</span></span>
+      <span class="mono">SECURE WORKSPACE <i></i></span>
+    </footer>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
