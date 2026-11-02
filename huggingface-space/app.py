@@ -1,4 +1,5 @@
 import gradio as gr
+from gpu import gpu_ready
 
 # Custom CSS for the cyber neon design and fixed indigo background
 custom_css = """
