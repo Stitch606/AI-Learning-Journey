@@ -7,7 +7,7 @@ sdk: gradio
 sdk_version: 6.31.0
 app_file: app.py
 pinned: false
-short_description: Custom HTML/CSS action detection frontend powered by Gradio Server
+short_description: Custom action detection web interface
 ---
 
 # Human Action Detection
