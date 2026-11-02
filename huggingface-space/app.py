@@ -44,18 +44,71 @@ body, .gradio-container {
 
 with gr.Blocks(css=custom_css) as demo:
     with gr.Column(elem_classes="cyber-frame"):
-        video_output = gr.Video(label="Cyber Video Stream", interactive=False)
+        video_output = gr.Video(
+            label="Cyber Video Stream",
+            sources=["upload"],
+            interactive=True,
+            height=360,
+        )
 
         with gr.Row():
             upload_btn = gr.Button("📁 Upload Video", elem_classes="cyber-btn")
             camera_btn = gr.Button("📷 Open Camera", elem_classes="cyber-btn")
 
-    with gr.Row():
-        camera_choice = gr.Radio(
-            choices=["Front Camera", "Rear Camera"],
-            value="Front Camera",
-            label="Switch Camera",
-        )
+    camera_choice = gr.Radio(
+        choices=["Front Camera", "Rear Camera"],
+        value="Front Camera",
+        label="Switch Camera",
+    )
+
+    camera_front = gr.Video(
+        label="Record from Front Camera",
+        sources=["webcam"],
+        webcam_options=gr.WebcamOptions(
+            mirror=True,
+            constraints={"facingMode": "user"},
+        ),
+        interactive=True,
+        height=360,
+        visible=False,
+    )
+
+    camera_rear = gr.Video(
+        label="Record from Rear Camera",
+        sources=["webcam"],
+        webcam_options=gr.WebcamOptions(
+            mirror=False,
+            constraints={"facingMode": "environment"},
+        ),
+        interactive=True,
+        height=360,
+        visible=False,
+    )
+
+    upload_btn.click(
+        fn=lambda: (gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)),
+        inputs=None,
+        outputs=[video_output, camera_front, camera_rear],
+    )
+
+    camera_btn.click(
+        fn=lambda choice: (
+            gr.update(visible=False),
+            gr.update(visible=choice == "Front Camera"),
+            gr.update(visible=choice == "Rear Camera"),
+        ),
+        inputs=camera_choice,
+        outputs=[video_output, camera_front, camera_rear],
+    )
+
+    camera_choice.change(
+        fn=lambda choice: (
+            gr.update(visible=choice == "Front Camera"),
+            gr.update(visible=choice == "Rear Camera"),
+        ),
+        inputs=camera_choice,
+        outputs=[camera_front, camera_rear],
+    )
 
 if __name__ == "__main__":
     demo.launch()
