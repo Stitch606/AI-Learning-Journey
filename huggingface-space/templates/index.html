@@ -1,108 +1,12 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#080b18">
-  <title>Actions Detection</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-  <div class="ambient ambient-a"></div>
-  <div class="ambient ambient-b"></div>
-
-  <main class="shell">
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Actions Detection home">
-        <span class="brand-mark"><span></span><span></span><span></span></span>
-        <span class="brand-name">SENTINEL<span> / VISION</span></span>
-      </a>
-      <div class="top-meta">
-        <span class="system-dot"></span>
-        <span>VISION SYSTEM</span>
-        <span class="meta-divider"></span>
-        <span class="mono">BUILD 01.01</span>
-      </div>
-    </header>
-
-    <section class="workspace">
-      <div class="intro">
-        <div>
-          <div class="eyebrow"><span class="eyebrow-line"></span> COMPUTER VISION PLATFORM</div>
-          <h1>Actions <span>Detection</span></h1>
-          <p class="subtitle">Human activity monitoring workspace</p>
-        </div>
-        <div class="session-chip"><span class="pulse"></span> SESSION READY</div>
-      </div>
-
-      <nav class="mode-switch" aria-label="Input mode">
-        <button class="mode-btn active" id="liveMode" type="button" aria-pressed="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><path d="m9 5 1-2h4l1 2M9.5 12a2.5 2.5 0 1 0 5 0 2.5 2.5 0 0 0-5 0Z"/></svg>
-          <span>Live camera</span>
-        </button>
-        <button class="mode-btn" id="videoMode" type="button" aria-pressed="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
-          <span>Video file</span>
-        </button>
-        <div class="mode-indicator" id="modeIndicator"></div>
-      </nav>
-
-      <section class="monitor" aria-label="Video input monitor">
-        <div class="monitor-head">
-          <div class="monitor-label"><span class="live-led" id="monitorLed"></span><span id="monitorTitle">LIVE INPUT</span></div>
-          <span class="monitor-code mono" id="monitorCode">CAM / 01</span>
-        </div>
-        <div class="viewport" id="viewport">
-          <div class="grid-overlay"></div>
-          <div class="corner corner-tl"></div><div class="corner corner-tr"></div>
-          <div class="corner corner-bl"></div><div class="corner corner-br"></div>
-          <video id="cameraPreview" autoplay muted playsinline></video>
-          <video id="filePreview" controls playsinline></video>
-          <div class="empty-state" id="emptyState">
-            <div class="camera-symbol">
-              <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="13" width="36" height="25" rx="5"/><circle cx="24" cy="25.5" r="7"/><path d="m15 13 3-5h12l3 5"/></svg>
-            </div>
-            <strong id="emptyTitle">Camera is standing by</strong>
-            <span id="emptyDescription">Start your camera to preview a live feed</span>
-            <button class="primary-btn compact" id="startCamera" type="button">
-              <span class="btn-icon">◉</span> Start camera
-            </button>
-            <label class="drop-hint" id="dropHint" for="videoInput">or <span>choose a video file</span></label>
-          </div>
-          <div class="viewport-footer"><span>INPUT PREVIEW</span><span class="mono" id="viewportResolution">AWAITING SOURCE</span></div>
-        </div>
-        <div class="monitor-foot">
-          <div class="source-info"><span class="source-icon">◈</span><span id="sourceName">No input source selected</span></div>
-          <label class="file-btn" id="chooseFile" for="videoInput">Choose video <span>↗</span></label>
-          <input id="videoInput" type="file" accept="video/*" hidden>
-        </div>
-      </section>
-
-      <div class="action-row">
-        <div class="readiness">
-          <span class="readiness-icon">i</span>
-          <div><strong>Detection pipeline</strong><small id="pipelineStatus">Waiting for model connection</small></div>
-        </div>
-        <button class="primary-btn analyze-btn" id="analyzeButton" type="button" disabled>
-          Analyze input <span class="arrow">→</span>
-        </button>
-      </div>
-
-      <div class="notice" id="notice" role="status" aria-live="polite">
-        <span class="notice-mark">!</span>
-        <span id="noticeText">Interface online. Connect your detection pipeline to enable analysis.</span>
-      </div>
-    </section>
-
-    <footer class="footer">
-      <span> SENTINEL VISION <span class="footer-muted">· HUMAN ACTION ANALYSIS</span></span>
-      <span class="mono">SECURE WORKSPACE <i></i></span>
-    </footer>
-  </main>
-
-  <script type="module" src="/static/app.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#03091d"><title>Action Detector</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="/static/style.css"></head>
+<body><div class="app">
+<header class="top"><button id="menu" class="menu">☰</button><div class="brand"><span class="runner">🏃</span><div><strong>ACTION <b>DETECTOR</b></strong><small>Detect · Track · Analyze · Stay Safe</small></div></div><div class="online"><i></i><span>System Online<small>YOLOv8 + Pose</small></span></div><time id="clock"></time><button class="gear">⚙</button></header>
+<aside class="side" id="side"><nav><a class="selected" href="#dashboard">⌂ <span>Dashboard</span></a><a href="#video-controls">▣ <span>Video Analysis</span></a><a href="#analytics">▥ <span>Analytics</span></a><a href="#events">▤ <span>Event Log</span></a><a href="#settings">⚙ <span>Settings</span></a></nav><div class="slogan">SAFER<br>WORKPLACES<br><em>THROUGH<br>AI</em><div class="silhouette">🏃‍♂️</div></div></aside>
+<main id="dashboard" class="content">
+<section class="hero-grid"><article class="panel video-panel"><div class="video-title"><span>▣ &nbsp;<b id="filename">factory_scene.mp4</b></span><div><small id="resolution">3840 × 2160</small><small id="fps">30 FPS</small></div></div><div class="screen" id="screen"><video id="video" playsinline></video><div class="demo" id="demo"><div class="factory-lights"></div><div class="person p1"><i></i><b></b><label>person 0.92</label><small>walking</small></div><div class="person p2"><i></i><b></b><label>person 0.89</label><small>lifting</small></div><div class="person p3"><i></i><b></b><label>person 0.87</label><small>standing</small></div><div class="person p4"><i></i><b></b><label>person 0.93</label><small>fall</small></div><span class="demo-tag"><i></i> DEMO FOOTAGE</span></div><div class="empty" id="empty">▣<b>Upload a video to begin</b><small>Your analyzed footage will appear here</small></div></div><div class="player"><button id="play">▶</button><span id="time">00:12 / 00:45</span><input id="seek" type="range" min="0" max="45" value="12"><button id="mute">🔊</button><button id="speed">1.0x</button><button id="full">⛶</button></div></article>
+<div class="right"><article class="panel stats"><h2>LIVE STATISTICS</h2><div class="stat-grid"><div class="stat cyan"><span>♙</span><div><b id="people">4</b><small>Total People</small></div></div><div class="stat purple"><span>🏃</span><div><b id="actions">1</b><small>Actions Detected</small></div></div><div class="stat red"><span>⚠</span><div><b id="falls">1</b><small>Fall Detected</small></div></div><div class="stat green"><span>⬡</span><div><b id="collisions">0</b><small>Collisions</small></div></div></div></article>
+<article class="panel detected"><h2>DETECTED ACTIONS</h2><div class="action cyan"><span>♟</span><div><p>Walking <b>2 <i>50%</i></b></p><hr style="--w:50%"></div></div><div class="action green"><span>♟</span><div><p>Standing <b>1 <i>25%</i></b></p><hr style="--w:25%"></div></div><div class="action amber"><span>♟</span><div><p>Lifting <b>1 <i>25%</i></b></p><hr style="--w:25%"></div></div><div class="action red"><span>♟</span><div><p>Fall <b>1 <i>25%</i></b></p><hr style="--w:25%"></div></div></article><div class="primary"><button id="stop">■ &nbsp; Stop Analysis</button><button id="download">⇩ &nbsp; Download Result</button></div></div></section>
+<section class="lower"><article class="panel controls" id="video-controls"><h2>VIDEO CONTROLS</h2><div class="tiles"><button id="upload">▱<small>Upload<br>Video</small></button><button id="camera">◎<small>Use<br>Camera</small></button><button id="start" class="start">▶<small>Start<br>Analysis</small></button><button id="pause" class="pause">Ⅱ<small>Pause<br>Analysis</small></button><input type="file" id="file" accept="video/*" hidden></div><div class="range-label"><label for="confidence">Confidence Threshold</label><output id="confidenceValue">0.25</output></div><input id="confidence" class="confidence" type="range" min=".05" max=".95" step=".05" value=".25"><div class="selects"><label>Model<select id="model"><option>YOLOv8</option><option>YOLO26</option><option>Custom</option></select></label><label>Device<select id="device"><option>Auto (CPU)</option><option>CUDA</option><option>CPU</option></select></label></div><small class="status" id="status">Ready · Demo dashboard</small></article>
+<article class="panel chart" id="analytics"><div class="chart-head"><h2>ACTIONS OVER TIME</h2><div class="legend"><span>● Walking</span><span>● Standing</span><span>● Lifting</span><span>● Fall</span></div></div><canvas id="chart"></canvas></article>
+<article class="panel events" id="events"><h2>RECENT EVENTS</h2><div class="event-list" id="eventList"><div><i class="red">♟</i><span><b>Fall Detected</b><small>Conf: 0.93</small></span><time>16:42:03</time></div><div><i class="amber">♟</i><span><b>Lifting</b><small>Conf: 0.89</small></span><time>16:41:47</time></div><div><i class="cyan">♟</i><span><b>Walking</b><small>Conf: 0.92</small></span><time>16:41:32</time></div><div><i class="green">♟</i><span><b>Standing</b><small>Conf: 0.87</small></span><time>16:41:15</time></div></div></article></section><footer>ACTION DETECTOR <span>•</span> Workplace intelligence dashboard</footer></main></div><script src="/static/app.js"></script></body></html>
