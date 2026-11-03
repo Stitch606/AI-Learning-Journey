@@ -1,6 +1,6 @@
 import numpy as np
 
-from graph import tools
+from . import tools
 
 
 num_node = 20
