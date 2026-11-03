@@ -1,4 +1,5 @@
 import math
+from importlib import import_module
 
 import numpy as np
 import torch
@@ -11,13 +12,9 @@ from torch.autograd import Variable
 # ============================================================
 
 def import_class(name):
-    components = name.split(".")
-    module = __import__(components[0])
-
-    for component in components[1:]:
-        module = getattr(module, component)
-
-    return module
+    module_name, class_name = name.rsplit(".", 1)
+    module = import_module(module_name)
+    return getattr(module, class_name)
 
 
 def conv_init(conv):
