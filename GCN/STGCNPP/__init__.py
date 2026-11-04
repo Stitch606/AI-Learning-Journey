@@ -1,4 +1,4 @@
-"""PYSKL ST-GCN++ integration for COCO-17 YOLO pose sequences."""
-from .model import build_stgcnpp, prepare_yolo_jm
+"""Public API for the standalone COCO-17 ST-GCN++ model."""
+from .model import STGCNPP
 
-__all__ = ["build_stgcnpp", "prepare_yolo_jm"]
+__all__ = ["STGCNPP"]
