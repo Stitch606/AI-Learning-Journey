@@ -39,13 +39,19 @@ jobs:
           pip install -e .
           pip install pytest
 
-      - name: Download official ST-GCN++ Joint-Motion checkpoint
+      - name: Use checkpoint stored in repository (download only if missing)
         run: |
           mkdir -p GCN/checkpoints
-          curl -fL --retry 4 --retry-delay 3 \
-            https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth \
-            -o GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
-          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth)" -gt 1000000
+          CHECKPOINT=GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
+          if [ -s "$CHECKPOINT" ]; then
+            echo "Using checkpoint committed in this repository."
+          else
+            echo "Checkpoint missing from checkout; downloading official source."
+            curl -fL --retry 4 --retry-delay 3 \
+              https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth \
+              -o "$CHECKPOINT"
+          fi
+          test "$(stat -c%s "$CHECKPOINT")" -gt 1000000
 
       - name: Verify checkpoint provenance and architecture compatibility
         run: |
