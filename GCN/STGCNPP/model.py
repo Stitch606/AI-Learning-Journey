@@ -272,8 +272,7 @@ class STGCNPP(nn.Module):
 
 
 def load_checkpoint(model, checkpoint_path, strict=True):
-    checkpoint = torch.load(str(checkpoint_path), map_location="cpu",
-                            weights_only=False)
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
     state = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
     if not isinstance(state, dict):
         raise TypeError("Checkpoint does not contain a state_dict mapping")
