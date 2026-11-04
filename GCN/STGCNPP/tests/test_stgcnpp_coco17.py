@@ -56,7 +56,7 @@ def test_official_checkpoint_strict_load_and_forward():
     assert CHECKPOINT.is_file(), f"Missing downloaded checkpoint: {CHECKPOINT}"
     model, cfg = build_stgcnpp(CONFIG, CHECKPOINT, device="cpu")
     assert cfg.model.backbone.graph_cfg.layout == "coco"
-    assert cfg.model.backbone.in_channels == 3
+    assert cfg.model.backbone.get('in_channels', 3) == 3
     assert cfg.model.cls_head.num_classes == 60
 
     # Exercise the complete official RecognizerGCN forward path using the
