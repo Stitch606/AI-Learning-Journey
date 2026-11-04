@@ -174,7 +174,7 @@ class STGCNBlock(nn.Module):
 
         if tcn_type == "mstcn":
             self.tcn = MultiScaleTCN(
-                out_channels, out_channels, dropout=tcn_dropout)
+                out_channels, out_channels, dropout=tcn_dropout, stride=stride)
         elif tcn_type == "unit_tcn":
             self.tcn = UnitTCN(
                 out_channels, out_channels, kernel_size=9,
@@ -337,15 +337,72 @@ class STGCNPP(nn.Module):
             raise ValueError(
                 f"Expected V=17 and C=3 (x,y,confidence); got V={keypoint.shape[-2]}, C={keypoint.shape[-1]}")
 
+        # Match PYSKL FormatGCNInput(num_person=2, mode='zero').
+        if keypoint.shape[1] < 2:
+            pad = keypoint.new_zeros(
+                keypoint.shape[0], 2 - keypoint.shape[1],
+                keypoint.shape[2], keypoint.shape[3], keypoint.shape[4])
+            keypoint = torch.cat((keypoint, pad), dim=1)
+        elif keypoint.shape[1] > 2:
+            keypoint = keypoint[:, :2]
+
         features = self.backbone(keypoint)
         return self.cls_head(features)
 
-    def load_pyskl_checkpoint(self, checkpoint_path, strict=True, map_location="cpu"):
-        """Load an official PYSKL checkpoint (e.g. stgcnpp.../jm.pth)."""
+    def load_pyskl_checkpoint(self, checkpoint_path, strict=True,
+                              map_location="cpu", load_head=True):
+        """Load the official PYSKL JM checkpoint.
+
+        Set load_head=False when num_classes differs from the checkpoint's
+        60 NTU classes; the pretrained backbone is still loaded.
+        """
         checkpoint = torch.load(checkpoint_path, map_location=map_location)
         state = checkpoint.get("state_dict", checkpoint.get("model", checkpoint))
         cleaned = {}
         for key, value in state.items():
             key = key.removeprefix("module.")
+            if not load_head and key.startswith("cls_head."):
+                continue
             cleaned[key] = value
-        return self.load_state_dict(cleaned, strict=strict)
+        return self.load_state_dict(
+            cleaned, strict=(strict if load_head else False))
+
+
+def prepare_joint_motion(keypoints, image_size, threshold=0.01):
+    """Apply PYSKL PreNormalize2D + GenSkeFeat(feats=['jm']) to YOLO COCO-17.
+
+    Args:
+        keypoints: [N,T,17,3] or [N,M,T,17,3], with pixel x/y and confidence.
+        image_size: (height, width) of the source video frame.
+        threshold: PYSKL's default low-confidence threshold.
+
+    Returns:
+        Joint-motion tensor with the same shape, ready for STGCNPP.forward().
+    """
+    if keypoints.ndim not in (4, 5) or keypoints.shape[-2:] != (17, 3):
+        raise ValueError("Expected [N,T,17,3] or [N,M,T,17,3] YOLO keypoints.")
+
+    height, width = image_size
+    if height <= 0 or width <= 0:
+        raise ValueError("image_size must contain positive (height, width).")
+
+    joints = keypoints.clone().float()
+    confidence = joints[..., 2].clone()
+    joints[..., 0] = (joints[..., 0] - width / 2) / (width / 2)
+    joints[..., 1] = (joints[..., 1] - height / 2) / (height / 2)
+
+    invalid = confidence <= threshold
+    joints[..., 0][invalid] = 0
+    joints[..., 1][invalid] = 0
+
+    motion = torch.zeros_like(joints)
+    if joints.ndim == 4:
+        motion[:, :-1] = joints[:, 1:] - joints[:, :-1]
+        motion[:, :-1, :, 2] = (
+            joints[:, :-1, :, 2] + joints[:, 1:, :, 2]) / 2
+    else:
+        motion[:, :, :-1] = joints[:, :, 1:] - joints[:, :, :-1]
+        motion[:, :, :-1, :, 2] = (
+            joints[:, :, :-1, :, 2] + joints[:, :, 1:, :, 2]) / 2
+
+    return motion
