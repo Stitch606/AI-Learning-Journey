@@ -32,6 +32,19 @@ jobs:
           pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
           pip install numpy==1.26.4 opencv-python-headless==4.10.0.84 ultralytics==8.3.0
 
+      - name: Assert legacy frameworks are absent and standalone model imports
+        run: |
+          python - <<'PY'
+          import importlib.util
+          forbidden = ("mmcv", "mmaction", "pyskl", "mmengine")
+          present = [name for name in forbidden if importlib.util.find_spec(name) is not None]
+          if present:
+              raise SystemExit(f"Legacy frameworks unexpectedly installed: {present}")
+          from GCN.STGCNPP import STGCNPP
+          print("Legacy frameworks absent:", ", ".join(forbidden))
+          print("Standalone ST-GCN++ import: PASSED")
+          PY
+
       - name: Verify official checkpoint exists
         run: |
           test -s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
