@@ -15,7 +15,9 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-ROOT = Path(__file__).resolve().parents[3]
+# run_video_inference.py is <repo>/GCN/STGCNPP/run_video_inference.py.
+# parents[2] is the repository root; parents[3] points one directory too high.
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from GCN.STGCNPP import STGCNPP
 
@@ -42,7 +44,6 @@ def extract_pose(video_path: Path, pose_model: YOLO, max_frames: int = 180):
             if result.keypoints is not None and result.keypoints.data is not None:
                 candidates = result.keypoints.data.detach().cpu().numpy()
                 if len(candidates):
-                    # Select the detected person with the highest mean joint confidence.
                     scores = candidates[:, :, 2].mean(axis=1)
                     chosen = candidates[int(np.argmax(scores))].astype(np.float32)
             frames.append(chosen)
