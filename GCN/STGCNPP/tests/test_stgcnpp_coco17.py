@@ -13,7 +13,7 @@ from GCN.STGCNPP.model import (
 
 PYSKL_ROOT = Path("/tmp/pyskl")
 CONFIG = PYSKL_ROOT / "configs/stgcn++/stgcn++_ntu60_xsub_hrnet/jm.py"
-CHECKPOINT = Path("GCN/checkpoints/stgcnpp_jm_coco17.pth")
+CHECKPOINT = Path("GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth")
 
 
 def test_coco17_layout_matches_pyskl_graph():
