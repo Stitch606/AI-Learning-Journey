@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   compatibility:
@@ -44,7 +44,7 @@ jobs:
           mkdir -p GCN/checkpoints
           curl -fL --retry 4 --retry-delay 3 \
             https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth \
-            -o GCN/checkpoints/stgcnpp_jm_coco17.pth
+            -o GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
           test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_coco17.pth)" -gt 1000000
 
       - name: Verify checkpoint provenance and architecture compatibility
@@ -63,6 +63,18 @@ jobs:
       - name: Run COCO-17, strict state-dict, and forward tests
         run: |
           pytest -q GCN/STGCNPP/tests/test_stgcnpp_coco17.py -ra
+
+      - name: Commit official checkpoint to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
+          if ! git diff --cached --quiet; then
+            git commit -m "Add official ST-GCN++ Joint Motion checkpoint"
+            git push
+          else
+            echo "Checkpoint is already up to date."
+          fi
 
       - name: Upload test report
         if: always()
