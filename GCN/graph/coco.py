@@ -1,30 +1,39 @@
-"""COCO-17 skeleton topology used by YOLO Pose."""
+"""Exact COCO-17 graph topology and partition orientation used by PYSKL."""
 import torch
 
+# These are PYSKL's original inward links for layout='coco'.
 # COCO order: nose, left_eye, right_eye, left_ear, right_ear,
 # left_shoulder, right_shoulder, left_elbow, right_elbow,
 # left_wrist, right_wrist, left_hip, right_hip,
 # left_knee, right_knee, left_ankle, right_ankle.
-INWARD_EDGES = (
-    (0, 1), (0, 2), (1, 3), (2, 4),
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
-    (5, 11), (6, 12), (11, 12),
-    (11, 13), (13, 15), (12, 14), (14, 16),
+INWARD = (
+    (15, 13), (13, 11), (16, 14), (14, 12),
+    (11, 5), (12, 6), (9, 7), (7, 5),
+    (10, 8), (8, 6), (5, 0), (6, 0),
+    (1, 0), (3, 1), (2, 0), (4, 2),
 )
 
 
+def _edge2mat(edges, num_nodes):
+    matrix = torch.zeros(num_nodes, num_nodes)
+    for source, target in edges:
+        matrix[target, source] = 1.0
+    return matrix
+
+
+def _normalize_digraph(matrix):
+    degree = matrix.sum(0)
+    inverse = torch.zeros_like(degree)
+    valid = degree > 0
+    inverse[valid] = degree[valid].reciprocal()
+    return matrix @ torch.diag(inverse)
+
+
 def adjacency():
-    v = 17
-    identity = torch.eye(v)
-    inward = torch.zeros(v, v)
-    outward = torch.zeros(v, v)
-    for source, target in INWARD_EDGES:
-        inward[target, source] = 1.0
-        outward[source, target] = 1.0
-    def normalize(a):
-        degree = a.sum(0)
-        inv = torch.zeros_like(degree)
-        valid = degree > 0
-        inv[valid] = degree[valid].reciprocal()
-        return a @ torch.diag(inv)
-    return torch.stack((identity, normalize(inward), normalize(outward)))
+    num_nodes = 17
+    self_links = tuple((i, i) for i in range(num_nodes))
+    outward = tuple((target, source) for source, target in INWARD)
+    identity = _edge2mat(self_links, num_nodes)
+    inward_matrix = _normalize_digraph(_edge2mat(INWARD, num_nodes))
+    outward_matrix = _normalize_digraph(_edge2mat(outward, num_nodes))
+    return torch.stack((identity, inward_matrix, outward_matrix))
