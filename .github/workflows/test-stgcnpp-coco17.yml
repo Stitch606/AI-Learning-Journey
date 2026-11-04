@@ -24,20 +24,11 @@ jobs:
           python-version: "3.8"
           cache: pip
 
-      - name: Install CPU PyTorch and OpenMMLab dependencies
+      - name: Install standalone runtime and test dependencies
         run: |
           python -m pip install --upgrade "pip<25" wheel setuptools
-          pip install torch==1.12.1+cpu torchvision==0.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-          pip install numpy==1.23.5
-          pip install openmim
-          mim install mmcv-full==1.6.0
-
-      - name: Get official PYSKL source
-        run: |
-          git clone --depth 1 https://github.com/kennymckormick/pyskl.git /tmp/pyskl
-          cd /tmp/pyskl
-          pip install -e .
-          pip install pytest
+          pip install torch==1.12.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.23.5 pytest
 
       - name: Use checkpoint stored in repository (download only if missing)
         run: |
