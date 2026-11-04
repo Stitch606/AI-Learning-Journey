@@ -45,13 +45,13 @@ jobs:
           curl -fL --retry 4 --retry-delay 3 \
             https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth \
             -o GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
-          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_coco17.pth)" -gt 1000000
+          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth)" -gt 1000000
 
       - name: Verify checkpoint provenance and architecture compatibility
         run: |
           python - <<'PY'
           import torch
-          p = "GCN/checkpoints/stgcnpp_jm_coco17.pth"
+          p = "GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth"
           ckpt = torch.load(p, map_location="cpu")
           print("Checkpoint top-level keys:", list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt))
           state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else None
