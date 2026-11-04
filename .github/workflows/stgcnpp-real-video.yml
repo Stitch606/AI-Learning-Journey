@@ -1,0 +1,62 @@
+name: Real-video ST-GCN++ inference smoke test
+
+on:
+  push:
+    paths:
+      - "GCN/STGCNPP/model.py"
+      - "GCN/STGCNPP/run_video_inference.py"
+      - "GCN/STGCNPP/ntu60_labels.txt"
+      - ".github/workflows/stgcnpp-real-video.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-video-inference:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.26.4 opencv-python-headless==4.10.0.84 ultralytics==8.3.0
+
+      - name: Verify official checkpoint exists
+        run: |
+          test -s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
+          ls -lh GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
+
+      - name: Run walking video through YOLO pose and standalone ST-GCN++
+        run: |
+          python GCN/STGCNPP/run_video_inference.py \
+            --name walking \
+            --video-url "https://videos.pexels.com/video-files/5319934/5319934-sd_640_360_25fps.mp4" \
+            --checkpoint GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth \
+            --device cpu
+
+      - name: Run running video through YOLO pose and standalone ST-GCN++
+        run: |
+          python GCN/STGCNPP/run_video_inference.py \
+            --name running \
+            --video-url "https://videos.pexels.com/video-files/5319940/5319940-sd_640_360_25fps.mp4" \
+            --checkpoint GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth \
+            --device cpu
+
+      - name: Upload inference reports and source clips
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgcnpp-real-video-inference
+          path: artifacts/stgcnpp-video-test/
+          if-no-files-found: warn
