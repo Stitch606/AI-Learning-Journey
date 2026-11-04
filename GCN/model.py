@@ -39,7 +39,7 @@ def coco17_adjacency():
 class MultiScaleTemporalConv(nn.Module):
     """Parallel temporal branches with multiple dilation rates and pooling."""
     def __init__(self, in_channels, out_channels, stride=1,
-                 dilations=(1, 2, 3), dropout=0.0):
+                 dilations=(1, 2), dropout=0.0):
         super().__init__()
         branch_count = len(dilations) + 2
         if out_channels % branch_count:
