@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 from GCN.STGCNPP.model import (
     COCO17_NAMES, PYSKL_COCO17_INWARD_EDGES,
-    build_stgcnpp, prepare_yolo_keypoints, validate_yolo_coco17,
+    build_stgcnpp, prepare_yolo_jm, validate_yolo_coco17,
 )
 
 PYSKL_ROOT = Path("/tmp/pyskl")
@@ -20,6 +20,10 @@ def test_coco17_layout_matches_pyskl_graph():
     assert len(COCO17_NAMES) == 17
     assert len(PYSKL_COCO17_INWARD_EDGES) == 16
     assert all(0 <= a < 17 and 0 <= b < 17 for a, b in PYSKL_COCO17_INWARD_EDGES)
+    from pyskl.utils.graph import Graph
+    official_graph = Graph(layout="coco", mode="spatial")
+    assert official_graph.num_node == 17
+    assert tuple(official_graph.inward) == PYSKL_COCO17_INWARD_EDGES
     # COCO-17 ordering used by Ultralytics YOLO pose and PYSKL's coco Graph.
     assert COCO17_NAMES == (
         "nose", "left_eye", "right_eye", "left_ear", "right_ear",
@@ -29,12 +33,12 @@ def test_coco17_layout_matches_pyskl_graph():
     )
 
 
-def test_yolo_adapter_shape_and_values():
+def test_yolo_to_official_joint_motion_shape_and_values():
     sample = np.zeros((100, 17, 3), dtype=np.float32)
     sample[..., 2] = 1.0
-    packed = prepare_yolo_keypoints(sample)
+    packed = prepare_yolo_jm(sample, image_size=(1920, 1080), clip_len=100)
     assert packed.shape == (1, 1, 2, 100, 17, 3)
-    np.testing.assert_array_equal(packed[0, 0, 0], sample)
+    assert np.isfinite(packed).all()
     assert np.count_nonzero(packed[0, 0, 1]) == 0
 
 
@@ -57,7 +61,11 @@ def test_official_checkpoint_strict_load_and_forward():
 
     # Exercise the complete official RecognizerGCN forward path using the
     # expected recognizer tensor contract: [B, clips, persons, T, V, C].
-    keypoint = torch.randn(1, 1, 2, 100, 17, 3, dtype=torch.float32)
+    raw_yolo = np.zeros((100, 17, 3), dtype=np.float32)
+    raw_yolo[..., 0] = np.linspace(400, 600, 100)[:, None]
+    raw_yolo[..., 1] = np.linspace(300, 500, 100)[:, None]
+    raw_yolo[..., 2] = 0.95
+    keypoint = torch.from_numpy(prepare_yolo_jm(raw_yolo))
     with torch.no_grad():
         scores = model(keypoint=keypoint, return_loss=False)
     assert scores.shape == (1, 60), f"Unexpected classifier output: {scores.shape}"
