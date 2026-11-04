@@ -1,600 +1,194 @@
-import math
-from importlib import import_module
+"""ST-GCN++ for skeleton-based action recognition.
 
-import numpy as np
+Input:
+    [N, C, T, V, M] (preferred), or [N, T, V, C] for a single person.
+The default graph is COCO-17. This implementation uses PyTorch only.
+"""
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
+import torch.nn.functional as F
 
 
-# ============================================================
-# 1. Utility Functions
-# ============================================================
-
-def import_class(name):
-    module_name, class_name = name.rsplit(".", 1)
-    module = import_module(module_name)
-    return getattr(module, class_name)
+def _normalize_digraph(a):
+    degree = a.sum(0)
+    inv = torch.zeros_like(degree)
+    mask = degree > 0
+    inv[mask] = degree[mask].reciprocal()
+    return a @ torch.diag(inv)
 
 
-def conv_init(conv):
-    if conv.weight is not None:
-        nn.init.kaiming_normal_(conv.weight, mode="fan_out")
-
-    if conv.bias is not None:
-        nn.init.constant_(conv.bias, 0)
-
-
-def bn_init(bn, scale):
-    nn.init.constant_(bn.weight, scale)
-    nn.init.constant_(bn.bias, 0)
-
-
-def weights_init(module):
-    classname = module.__class__.__name__
-
-    if "Conv" in classname:
-        if hasattr(module, "weight"):
-            nn.init.kaiming_normal_(module.weight, mode="fan_out")
-
-        if hasattr(module, "bias") and module.bias is not None:
-            nn.init.constant_(module.bias, 0)
-
-    elif "BatchNorm" in classname:
-        if module.weight is not None:
-            module.weight.data.normal_(1.0, 0.02)
-
-        if module.bias is not None:
-            module.bias.data.zero_()
+def coco17_adjacency():
+    """Return the 3-partition COCO-17 adjacency: self, inward, outward."""
+    inward_edges = [
+        (0, 1), (0, 2), (1, 3), (2, 4),
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+        (5, 11), (6, 12), (11, 12),
+        (11, 13), (13, 15), (12, 14), (14, 16)
+    ]
+    v = 17
+    identity = torch.eye(v)
+    inward = torch.zeros(v, v)
+    outward = torch.zeros(v, v)
+    for source, target in inward_edges:
+        inward[target, source] = 1.0
+        outward[source, target] = 1.0
+    return torch.stack((identity, _normalize_digraph(inward),
+                        _normalize_digraph(outward)))
 
 
-# ============================================================
-# 2. Temporal Convolution Blocks
-# ============================================================
-
-class TemporalConv(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size,
-        stride=1,
-        dilation=1
-    ):
+class MultiScaleTemporalConv(nn.Module):
+    """Parallel temporal branches with multiple dilation rates and pooling."""
+    def __init__(self, in_channels, out_channels, stride=1,
+                 dilations=(1, 2, 3), dropout=0.0):
         super().__init__()
-
-        padding = (
-            kernel_size + (kernel_size - 1) * (dilation - 1) - 1
-        ) // 2
-
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, 1),
-            stride=(stride, 1),
-            padding=(padding, 0),
-            dilation=(dilation, 1)
-        )
-
-        self.bn = nn.BatchNorm2d(out_channels)
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        return x
-
-
-class MultiScale_TemporalConv(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size=3,
-        stride=1,
-        dilations=(1, 2, 3, 4),
-        residual=True,
-        residual_kernel_size=1
-    ):
-        super().__init__()
-
-        assert out_channels % (len(dilations) + 2) == 0
-
-        self.num_branches = len(dilations) + 2
-        branch_channels = out_channels // self.num_branches
-
-        if isinstance(kernel_size, list):
-            assert len(kernel_size) == len(dilations)
-        else:
-            kernel_size = [kernel_size] * len(dilations)
-
-        self.branches = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    branch_channels,
-                    kernel_size=1
-                ),
+        branch_count = len(dilations) + 2
+        if out_channels % branch_count:
+            raise ValueError("out_channels must be divisible by len(dilations)+2")
+        branch_channels = out_channels // branch_count
+        branches = []
+        for dilation in dilations:
+            padding = dilation
+            branches.append(nn.Sequential(
+                nn.Conv2d(in_channels, branch_channels, 1, bias=False),
                 nn.BatchNorm2d(branch_channels),
                 nn.ReLU(inplace=True),
-                TemporalConv(
-                    branch_channels,
-                    branch_channels,
-                    kernel_size=ks,
-                    stride=stride,
-                    dilation=dilation
-                )
-            )
-            for ks, dilation in zip(kernel_size, dilations)
-        ])
-
-        self.branches.append(
-            nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    branch_channels,
-                    kernel_size=1
-                ),
-                nn.BatchNorm2d(branch_channels),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(
-                    kernel_size=(3, 1),
-                    stride=(stride, 1),
-                    padding=(1, 0)
-                ),
-                nn.BatchNorm2d(branch_channels)
-            )
-        )
-
-        self.branches.append(
-            nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    branch_channels,
-                    kernel_size=1,
-                    stride=(stride, 1)
-                ),
-                nn.BatchNorm2d(branch_channels)
-            )
-        )
-
-        if not residual:
-            self.residual = lambda x: 0
-
-        elif in_channels == out_channels and stride == 1:
-            self.residual = lambda x: x
-
-        else:
-            self.residual = TemporalConv(
-                in_channels,
-                out_channels,
-                kernel_size=residual_kernel_size,
-                stride=stride
-            )
-
-        self.apply(weights_init)
+                nn.Conv2d(branch_channels, branch_channels,
+                          kernel_size=(3, 1), stride=(stride, 1),
+                          padding=(padding, 0), dilation=(dilation, 1),
+                          bias=False),
+                nn.BatchNorm2d(branch_channels)))
+        branches.append(nn.Sequential(
+            nn.Conv2d(in_channels, branch_channels, 1, bias=False),
+            nn.BatchNorm2d(branch_channels),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=(3, 1), stride=(stride, 1),
+                          padding=(1, 0)),
+            nn.BatchNorm2d(branch_channels)))
+        branches.append(nn.Sequential(
+            nn.Conv2d(in_channels, branch_channels, 1,
+                      stride=(stride, 1), bias=False),
+            nn.BatchNorm2d(branch_channels)))
+        self.branches = nn.ModuleList(branches)
+        self.dropout = nn.Dropout(dropout) if dropout else nn.Identity()
 
     def forward(self, x):
-        residual = self.residual(x)
-
-        branch_outputs = [
-            branch(x) for branch in self.branches
-        ]
-
-        output = torch.cat(branch_outputs, dim=1)
-        output += residual
-
-        return output
+        return self.dropout(torch.cat([branch(x) for branch in self.branches], dim=1))
 
 
-# ============================================================
-# 3. CTRGC: Channel-wise Topology Refinement Graph Convolution
-# ============================================================
-
-class CTRGC(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        rel_reduction=8,
-        mid_reduction=1
-    ):
+class SpatialGraphConv(nn.Module):
+    """Adaptive spatial graph convolution over the three COCO partitions."""
+    def __init__(self, in_channels, out_channels, adjacency,
+                 adaptive=True, residual=True):
         super().__init__()
-
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-        if in_channels in (3, 9):
-            self.rel_channels = 8
-        else:
-            self.rel_channels = in_channels // rel_reduction
-
-        self.conv1 = nn.Conv2d(
-            in_channels,
-            self.rel_channels,
-            kernel_size=1
-        )
-
-        self.conv2 = nn.Conv2d(
-            in_channels,
-            self.rel_channels,
-            kernel_size=1
-        )
-
-        self.conv3 = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=1
-        )
-
-        self.conv4 = nn.Conv2d(
-            self.rel_channels,
-            out_channels,
-            kernel_size=1
-        )
-
-        self.tanh = nn.Tanh()
-
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d):
-                conv_init(module)
-
-            elif isinstance(module, nn.BatchNorm2d):
-                bn_init(module, 1)
-
-    def forward(self, x, A=None, alpha=1):
-        x1 = self.conv1(x).mean(-2)
-        x2 = self.conv2(x).mean(-2)
-        x3 = self.conv3(x)
-
-        relation = self.tanh(
-            x1.unsqueeze(-1) - x2.unsqueeze(-2)
-        )
-
-        relation = self.conv4(relation) * alpha
-
-        if A is not None:
-            relation = relation + A.unsqueeze(0).unsqueeze(0)
-
-        output = torch.einsum(
-            "ncuv,nctv->nctu",
-            relation,
-            x3
-        )
-
-        return output
-
-
-# ============================================================
-# 4. GCN Block
-# ============================================================
-
-class unit_gcn(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        A,
-        coff_embedding=4,
-        adaptive=True,
-        residual=True
-    ):
-        super().__init__()
-
+        if adjacency.ndim != 3 or adjacency.shape[1] != adjacency.shape[2]:
+            raise ValueError("adjacency must have shape [K, V, V]")
+        self.num_subsets = adjacency.shape[0]
+        self.register_buffer("A", adjacency.float())
         self.adaptive = adaptive
-        self.num_subset = A.shape[0]
-
-        self.convs = nn.ModuleList([
-            CTRGC(in_channels, out_channels)
-            for _ in range(self.num_subset)
-        ])
-
-        if residual:
-            if in_channels != out_channels:
-                self.down = nn.Sequential(
-                    nn.Conv2d(
-                        in_channels,
-                        out_channels,
-                        kernel_size=1
-                    ),
-                    nn.BatchNorm2d(out_channels)
-                )
-            else:
-                self.down = lambda x: x
-        else:
-            self.down = lambda x: 0
-
         if adaptive:
-            self.PA = nn.Parameter(
-                torch.from_numpy(A.astype(np.float32))
-            )
-        else:
-            self.A = Variable(
-                torch.from_numpy(A.astype(np.float32)),
-                requires_grad=False
-            )
-
-        self.alpha = nn.Parameter(torch.zeros(1))
-
+            self.PA = nn.Parameter(adjacency.float().clone())
+        self.convs = nn.ModuleList([
+            nn.Conv2d(in_channels, out_channels, 1, bias=False)
+            for _ in range(self.num_subsets)
+        ])
+        self.alpha = nn.Parameter(torch.zeros(self.num_subsets))
         self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d):
-                conv_init(module)
-
-            elif isinstance(module, nn.BatchNorm2d):
-                bn_init(module, 1)
-
-        bn_init(self.bn, 1e-6)
-
-    def forward(self, x):
-        if self.adaptive:
-            A = self.PA
-        else:
-            A = self.A.cuda(x.get_device())
-
-        output = None
-
-        for i in range(self.num_subset):
-            z = self.convs[i](x, A[i], self.alpha)
-            output = z if output is None else output + z
-
-        output = self.bn(output)
-        output += self.down(x)
-        output = self.relu(output)
-
-        return output
-
-
-# ============================================================
-# 5. Temporal Convolution Unit
-# ============================================================
-
-class unit_tcn(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size=9,
-        stride=1
-    ):
-        super().__init__()
-
-        padding = (kernel_size - 1) // 2
-
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, 1),
-            padding=(padding, 0),
-            stride=(stride, 1)
-        )
-
-        self.bn = nn.BatchNorm2d(out_channels)
-
-        conv_init(self.conv)
-        bn_init(self.bn, 1)
-
-    def forward(self, x):
-        return self.bn(self.conv(x))
-
-
-# ============================================================
-# 6. Combined TCN + GCN Unit
-# ============================================================
-
-class TCN_GCN_unit(nn.Module):
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        A,
-        stride=1,
-        residual=True,
-        adaptive=True,
-        kernel_size=5,
-        dilations=(1, 2)
-    ):
-        super().__init__()
-
-        self.gcn1 = unit_gcn(
-            in_channels,
-            out_channels,
-            A,
-            adaptive=adaptive
-        )
-
-        self.tcn1 = MultiScale_TemporalConv(
-            out_channels,
-            out_channels,
-            kernel_size=kernel_size,
-            stride=stride,
-            dilations=dilations,
-            residual=False
-        )
-
-        self.relu = nn.ReLU(inplace=True)
-
         if not residual:
-            self.residual = lambda x: 0
-
-        elif in_channels == out_channels and stride == 1:
-            self.residual = lambda x: x
-
+            self.down = None
+        elif in_channels == out_channels:
+            self.down = nn.Identity()
         else:
-            self.residual = unit_tcn(
-                in_channels,
-                out_channels,
-                kernel_size=1,
-                stride=stride
-            )
+            self.down = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1, bias=False),
+                nn.BatchNorm2d(out_channels))
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        y = self.gcn1(x)
-        y = self.tcn1(y)
-        y = y + self.residual(x)
+        adjacency = self.PA if self.adaptive else self.A
+        out = 0
+        for k, conv in enumerate(self.convs):
+            # [N, C, T, V] x [V, V] -> [N, C, T, V]
+            out = out + torch.einsum("nctv,vw->nctw", conv(x),
+                                     adjacency[k] + self.alpha[k] * self.A[k])
+        out = self.bn(out)
+        if self.down is not None:
+            out = out + self.down(x)
+        return self.relu(out)
 
+
+class STGCNPPBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, adjacency, stride=1,
+                 residual=True, adaptive=True, dropout=0.0):
+        super().__init__()
+        self.gcn = SpatialGraphConv(in_channels, out_channels, adjacency,
+                                    adaptive=adaptive, residual=True)
+        self.tcn = MultiScaleTemporalConv(out_channels, out_channels,
+                                          stride=stride, dropout=dropout)
+        if not residual:
+            self.residual = None
+        elif in_channels == out_channels and stride == 1:
+            self.residual = nn.Identity()
+        else:
+            self.residual = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1,
+                          stride=(stride, 1), bias=False),
+                nn.BatchNorm2d(out_channels))
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        y = self.tcn(self.gcn(x))
+        if self.residual is not None:
+            y = y + self.residual(x)
         return self.relu(y)
 
 
-# ============================================================
-# 7. Main CTR-GCN Model
-# ============================================================
-
-class TCG(nn.Module):
-
-    def __init__(
-        self,
-        num_class=60,
-        num_point=25,
-        num_person=2,
-        graph=None,
-        graph_args=None,
-        in_channels=3,
-        drop_out=0,
-        adaptive=True
-    ):
+class STGCNPP(nn.Module):
+    """ST-GCN++ backbone + global pooling + classification head."""
+    def __init__(self, num_classes, in_channels=3, num_person=1,
+                 num_point=17, base_channels=64, num_stages=10,
+                 adaptive=True, dropout=0.0, graph=None):
         super().__init__()
-
         if graph is None:
-            raise ValueError("A graph import path must be provided.")
-
-        if graph_args is None:
-            graph_args = {}
-
-        Graph = import_class(graph)
-        self.graph = Graph(**graph_args)
-
-        A = self.graph.A
-
-        self.num_class = num_class
+            adjacency = coco17_adjacency()
+        else:
+            adjacency = torch.as_tensor(graph, dtype=torch.float32)
+        if adjacency.shape[-1] != num_point:
+            raise ValueError("Graph vertex count must equal num_point")
         self.num_point = num_point
-
-        self.data_bn = nn.BatchNorm1d(
-            num_person * in_channels * num_point
-        )
-
-        base_channel = 64
-
-        self.l1 = TCN_GCN_unit(
-            in_channels, base_channel, A,
-            residual=False, adaptive=adaptive
-        )
-
-        self.l2 = TCN_GCN_unit(
-            base_channel, base_channel, A,
-            adaptive=adaptive
-        )
-
-        self.l3 = TCN_GCN_unit(
-            base_channel, base_channel, A,
-            adaptive=adaptive
-        )
-
-        self.l4 = TCN_GCN_unit(
-            base_channel, base_channel, A,
-            adaptive=adaptive
-        )
-
-        self.l5 = TCN_GCN_unit(
-            base_channel, base_channel * 2, A,
-            stride=2, adaptive=adaptive
-        )
-
-        self.l6 = TCN_GCN_unit(
-            base_channel * 2, base_channel * 2, A,
-            adaptive=adaptive
-        )
-
-        self.l7 = TCN_GCN_unit(
-            base_channel * 2, base_channel * 2, A,
-            adaptive=adaptive
-        )
-
-        self.l8 = TCN_GCN_unit(
-            base_channel * 2, base_channel * 4, A,
-            stride=2, adaptive=adaptive
-        )
-
-        self.l9 = TCN_GCN_unit(
-            base_channel * 4, base_channel * 4, A,
-            adaptive=adaptive
-        )
-
-        self.l10 = TCN_GCN_unit(
-            base_channel * 4, base_channel * 4, A,
-            adaptive=adaptive
-        )
-
-        self.fc = nn.Linear(
-            base_channel * 4,
-            num_class
-        )
-
-        nn.init.normal_(
-            self.fc.weight,
-            0,
-            math.sqrt(2.0 / num_class)
-        )
-
-        bn_init(self.data_bn, 1)
-
-        self.drop_out = (
-            nn.Dropout(drop_out)
-            if drop_out
-            else nn.Identity()
-        )
+        self.num_person = num_person
+        self.in_channels = in_channels
+        self.data_bn = nn.BatchNorm1d(num_person * num_point * in_channels)
+        channels = [base_channels] * num_stages
+        for index in (4, 7):
+            if index < num_stages:
+                channels[index:] = [c * 2 for c in channels[index:]]
+        blocks = []
+        current = in_channels
+        for index, output in enumerate(channels):
+            stride = 2 if index in (4, 7) else 1
+            blocks.append(STGCNPPBlock(
+                current, output, adjacency, stride=stride,
+                residual=index != 0, adaptive=adaptive, dropout=dropout))
+            current = output
+        self.blocks = nn.ModuleList(blocks)
+        self.head = nn.Linear(current, num_classes)
 
     def forward(self, x):
-        if x.ndim == 3:
-            N, T, VC = x.shape
-
-            x = (
-                x.view(N, T, self.num_point, -1)
-                .permute(0, 3, 1, 2)
-                .contiguous()
-                .unsqueeze(-1)
-            )
-
-        N, C, T, V, M = x.size()
-
-        x = (
-            x.permute(0, 4, 3, 1, 2)
-            .contiguous()
-            .view(N, M * V * C, T)
-        )
-
+        # Accept [N,T,V,C] for one person or [N,C,T,V,M].
+        if x.ndim == 4:
+            x = x.permute(0, 3, 1, 2).unsqueeze(-1).contiguous()
+        elif x.ndim != 5:
+            raise ValueError("Expected [N,T,V,C] or [N,C,T,V,M]")
+        n, c, t, v, m = x.shape
+        if c != self.in_channels or v != self.num_point:
+            raise ValueError(f"Expected C={self.in_channels}, V={self.num_point}; got C={c}, V={v}")
+        if m != self.num_person:
+            raise ValueError(f"Expected M={self.num_person} people; got M={m}")
+        x = x.permute(0, 4, 3, 1, 2).contiguous().view(n, m * v * c, t)
         x = self.data_bn(x)
-
-        x = (
-            x.view(N, M, V, C, T)
-            .permute(0, 1, 3, 4, 2)
-            .contiguous()
-            .view(N * M, C, T, V)
-        )
-
-        x = self.l1(x)
-        x = self.l2(x)
-        x = self.l3(x)
-        x = self.l4(x)
-        x = self.l5(x)
-        x = self.l6(x)
-        x = self.l7(x)
-        x = self.l8(x)
-        x = self.l9(x)
-        x = self.l10(x)
-
-        c_new = x.size(1)
-
-        x = x.view(N, M, c_new, -1)
-        x = x.mean(-1).mean(1)
-
-        x = self.drop_out(x)
-
-        return self.fc(x)
+        x = x.view(n, m, v, c, t).permute(0, 1, 3, 4, 2)
+        x = x.contiguous().view(n * m, c, t, v)
+        for block in self.blocks:
+            x = block(x)
+        x = x.mean(dim=(2, 3)).view(n, m, -1).mean(dim=1)
+        return self.head(x)
