@@ -1,64 +1,87 @@
 # ST-GCN++ — PYSKL Joint Motion / COCO-17
 
-This module is a standalone PyTorch port of the **official PYSKL ST-GCN++**
-architecture and the configuration used by its published 2D Joint-Motion
-checkpoint:
+The model in this folder is a standalone PyTorch port of the official PYSKL
+ST-GCN++ architecture and the configuration used by the published 2D
+Joint-Motion checkpoint.
 
-- Config: `configs/stgcn++/stgcn++_ntu60_xsub_hrnet/jm.py`
-- Dataset setting: NTU60 XSub, HRNet 2D skeleton annotations
-- Graph: COCO-17, spatial partition
-- Input channels: x, y, confidence
+## Exact pretrained configuration
+
+- Official config: `configs/stgcn++/stgcn++_ntu60_xsub_hrnet/jm.py`
+- Dataset: NTU60 XSub, HRNet 2D skeleton annotations
+- Graph: COCO-17, PYSKL spatial partition and edge orientation
+- Input features: Joint Motion (JM), 3 channels
 - Clip length: 100 frames
-- Persons: 2 slots (the pipeline pads a single detected person)
+- Person slots: 2 (a single person is zero-padded to two slots)
 - GCN: adaptive='init', with residual
 - TCN: mstcn
 - Backbone output: 256 channels
-- Original classifier: 60 classes
+- Original classifier: 60 NTU action classes
 
 ## Files
 
-- `model.py`: PYSKL-compatible ST-GCN++ backbone, multi-scale TCN, GCN,
-  and GCN classification head. The module names follow PYSKL so the published
-  checkpoint can be loaded with `load_pyskl_checkpoint()`.
-- `graph/coco.py`: COCO-17 graph with the same inward/outward edge orientation
-  and adjacency normalization as PYSKL.
-- `config.py`: checkpoint and project configuration constants.
+- `model.py`: PYSKL-compatible ST-GCN++ backbone, GCN, multi-scale TCN,
+  GCN head, checkpoint loader, and YOLO-to-JM preprocessing helper.
+- `graph/coco.py`: exact COCO-17 adjacency orientation used by PYSKL.
+- `config.py`: model and checkpoint configuration constants.
+
+The model uses PYSKL-compatible state-dict names:
+`backbone.data_bn`, `backbone.gcn.*`, and `cls_head.fc_cls`.
 
 ## Official Joint-Motion checkpoint
 
 `https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth`
 
-PYSKL reports 84.0% top-1 on NTU60 XSub for this 2D HRNet Joint-Motion model.
-The checkpoint's classifier has 60 NTU action classes. For a project-specific
-classifier, load the pretrained backbone first and replace/fine-tune the head
-for the project's labels.
+PYSKL reports 84.0% top-1 accuracy on NTU60 XSub for this 2D HRNet
+Joint-Motion model.
 
-## Input
+The published classifier has 60 NTU classes. To load the full checkpoint,
+instantiate `STGCNPP(num_classes=60)`. For a project-specific classifier,
+instantiate it with your class count and call
+`load_pyskl_checkpoint(path, load_head=False)`; this loads the pretrained
+backbone while leaving your new classifier initialized for fine-tuning.
 
-Accepted tensors:
+## YOLO Pose input and preprocessing
 
-- `[N, T, 17, 3]` for one person
-- `[N, M, T, 17, 3]` for multiple people
+YOLO Pose's COCO-17 joint order matches the PYSKL COCO-17 layout:
 
-The model expects 2D coordinates and confidence, not XYZ depth. The published
-checkpoint uses 100-frame clips and PYSKL's 2D normalization and Joint-Motion
-feature generation. YOLO Pose uses the COCO-17 joint semantics/order, but its
-coordinate normalization and confidence distribution must still be processed
-consistently with the checkpoint pipeline.
+1. nose
+2. left eye
+3. right eye
+4. left ear
+5. right ear
+6. left shoulder
+7. right shoulder
+8. left elbow
+9. right elbow
+10. left wrist
+11. right wrist
+12. left hip
+13. right hip
+14. left knee
+15. right knee
+16. left ankle
+17. right ankle
 
-## Example
+The checkpoint expects 2D `x, y, confidence`, not XYZ depth. Its JM pipeline
+first normalizes pixel coordinates using the source frame dimensions, masks
+low-confidence coordinates, then computes frame-to-frame joint motion.
+Use the included helper for that transformation and uniformly sample each
+clip to 100 frames before inference.
 
 ```python
 import torch
-from GCN.model import STGCNPP
+from GCN.model import STGCNPP, prepare_joint_motion
 
-model = STGCNPP(num_classes=60)
-model.load_pyskl_checkpoint("jm.pth")
+# 10 project-specific action classes:
+model = STGCNPP(num_classes=10)
+model.load_pyskl_checkpoint("jm.pth", load_head=False)
 
-keypoints = torch.randn(2, 100, 17, 3)  # N, T, V, C
-logits = model(keypoints)
-print(logits.shape)  # [2, 60]
+# YOLO keypoints in pixel coordinates: [N, T, 17, 3]
+yolo_keypoints = torch.randn(2, 100, 17, 3)
+jm = prepare_joint_motion(yolo_keypoints, image_size=(1080, 1920))
+logits = model(jm)
+print(logits.shape)  # [2, 10]
 ```
 
-Reference implementation and configuration:
+Reference architecture and configuration:
 https://github.com/kennymckormick/pyskl
