@@ -23,8 +23,10 @@ feats=['jm'])` transforms must be applied to the raw coordinates before
 inference. The adapter does not pretend raw coordinates are already JM features.
 
 ## Automated verification
-GitHub Actions downloads the official checkpoint at runtime (it is not committed
-to Git), loads the full recognizer with `strict=True`, and runs a forward pass.
+GitHub Actions downloads the official checkpoint, saves it at
+`GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth`, and commits that binary to
+the repository after the compatibility tests pass. The workflow loads the full
+recognizer with `strict=True` and runs a forward pass.
 The test also checks the COCO-17 joint count/order and YOLO tensor adapter.
 
 Workflow: `.github/workflows/test-stgcnpp-coco17.yml`
