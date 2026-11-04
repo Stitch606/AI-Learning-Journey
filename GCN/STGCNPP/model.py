@@ -38,19 +38,32 @@ def validate_yolo_coco17(keypoints: np.ndarray) -> np.ndarray:
     return arr
 
 
-def prepare_yolo_keypoints(keypoints: np.ndarray, max_persons: int = 2) -> np.ndarray:
-    """Pack one YOLO person track into PYSKL recognizer input [1,1,M,T,17,3].
+def prepare_yolo_jm(keypoints: np.ndarray, image_size=(1920, 1080), clip_len: int = 100) -> np.ndarray:
+    """Convert one YOLO COCO-17 track [T,17,3] into official PYSKL JM input.
 
-    This is the coordinate tensor adapter. The official JM feature transform
-    (PreNormalize2D + GenSkeFeat(dataset='coco', feats=['jm'])) is applied by
-    the PYSKL inference pipeline before passing data to the recognizer.
+    Applies the same core transforms declared in the official jm.py config:
+    PreNormalize2D -> GenSkeFeat(dataset='coco', feats=['jm']) -> uniform
+    temporal sampling -> two-person formatting.
+    Returns [1,1,2,clip_len,17,3] (batch, clips, persons, T, V, C).
     """
     arr = validate_yolo_coco17(keypoints)
-    if max_persons != 2:
-        raise ValueError("The selected PYSKL checkpoint/config uses num_person=2")
-    t = arr.shape[0]
-    packed = np.zeros((1, 1, max_persons, t, 17, 3), dtype=np.float32)
-    packed[0, 0, 0] = arr
+    if clip_len != 100:
+        raise ValueError("The selected jm.py checkpoint config uses clip_len=100")
+    from pyskl.datasets.pipelines.pose_related import PreNormalize2D, GenSkeFeat
+
+    # Deterministic equivalent of UniformSample(clip_len=100, num_clips=1).
+    indices = np.linspace(0, arr.shape[0] - 1, clip_len).round().astype(np.int64)
+    sampled = arr[indices]
+    results = {
+        "keypoint": sampled[None, ..., :2].astype(np.float32),
+        "keypoint_score": sampled[None, ..., 2].astype(np.float32),
+        "img_shape": (int(image_size[1]), int(image_size[0])),
+    }
+    results = PreNormalize2D()(results)
+    results = GenSkeFeat(dataset="coco", feats=["jm"])(results)
+    jm = results["keypoint"]
+    packed = np.zeros((1, 1, 2, clip_len, 17, 3), dtype=np.float32)
+    packed[0, 0, 0] = jm[0]
     return packed
 
 
