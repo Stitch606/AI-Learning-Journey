@@ -1,0 +1,74 @@
+name: Test official PYSKL ST-GCN++ with YOLO COCO-17
+
+on:
+  push:
+    paths:
+      - "GCN/STGCNPP/**"
+      - ".github/workflows/test-stgcnpp-coco17.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+          cache: pip
+
+      - name: Install CPU PyTorch and OpenMMLab dependencies
+        run: |
+          python -m pip install --upgrade "pip<25" wheel setuptools
+          pip install torch==1.12.1+cpu torchvision==0.13.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.23.5
+          pip install openmim
+          mim install mmcv-full==1.6.0
+
+      - name: Get official PYSKL source
+        run: |
+          git clone --depth 1 https://github.com/kennymckormick/pyskl.git /tmp/pyskl
+          cd /tmp/pyskl
+          pip install -e .
+          pip install pytest
+
+      - name: Download official ST-GCN++ Joint-Motion checkpoint
+        run: |
+          mkdir -p GCN/checkpoints
+          curl -fL --retry 4 --retry-delay 3 \
+            https://download.openmmlab.com/mmaction/pyskl/ckpt/stgcnpp/stgcnpp_ntu60_xsub_hrnet/jm.pth \
+            -o GCN/checkpoints/stgcnpp_jm_coco17.pth
+          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_coco17.pth)" -gt 1000000
+
+      - name: Verify checkpoint provenance and architecture compatibility
+        run: |
+          python - <<'PY'
+          import torch
+          p = "GCN/checkpoints/stgcnpp_jm_coco17.pth"
+          ckpt = torch.load(p, map_location="cpu")
+          print("Checkpoint top-level keys:", list(ckpt.keys()) if isinstance(ckpt, dict) else type(ckpt))
+          state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else None
+          assert isinstance(state, dict) and state, "No state_dict found in official checkpoint"
+          print("Tensor entries:", len(state))
+          print("First keys:", list(state)[:12])
+          PY
+
+      - name: Run COCO-17, strict state-dict, and forward tests
+        run: |
+          pytest -q GCN/STGCNPP/tests/test_stgcnpp_coco17.py -ra
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgcnpp-coco17-test-report
+          path: |
+            .pytest_cache
+          if-no-files-found: ignore
