@@ -1,36 +1,51 @@
-# Official PYSKL ST-GCN++ / COCO-17 integration
+# Standalone PyTorch ST-GCN++ / COCO-17
 
-This package replaces the previous custom `GCN/model.py` implementation with an
-explicit adapter to the upstream PYSKL `RecognizerGCN + STGCN` implementation
-and its published `stgcn++_ntu60_xsub_hrnet/jm.py` configuration.
+This package provides a standalone PyTorch implementation of the ST-GCN++
+Joint Motion (JM) model for YOLO COCO-17 pose sequences.
 
-## Selected upstream model
-- Backbone: PYSKL `STGCN` (ST-GCN++)
-- Graph: `layout='coco'`, `mode='spatial'` (17 joints)
-- Input channels: 3
-- Temporal feature: Joint Motion (`jm`)
-- Clip length: 100 frames
-- Person slots: 2
-- Pretraining head: 60 NTU RGB+D classes
+## Runtime dependencies
+- PyTorch
+- NumPy
 
-## YOLO compatibility
-Ultralytics COCO-17 pose output uses the same 17-joint order encoded in
-`COCO17_NAMES`. The adapter validates [T,17,3] (x,y,confidence) arrays and
-packs them into the recognizer's [B,clips,M,T,V,C] contract.
+The model implementation does not import or require PYSKL, MMCV, MMAction,
+MMEngine, registries, or upstream config/runtime code.
 
-The official PYSKL `PreNormalize2D` and `GenSkeFeat(dataset='coco',
-feats=['jm'])` transforms must be applied to the raw coordinates before
-inference. The adapter does not pretend raw coordinates are already JM features.
+## Public API
+
+The only public model entry point is `STGCNPP`:
+
+```python
+from GCN.STGCNPP import STGCNPP
+
+model = STGCNPP(
+    checkpoint_path="GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth",
+    num_classes=60,
+    device="cuda",
+)
+
+# keypoints: NumPy array with shape [T,17,3], in YOLO COCO-17 order.
+probabilities = model.predict(keypoints, image_size=(1920, 1080))
+class_id = probabilities.argmax(dim=-1).item()
+```
+
+The constructor loads the checkpoint and moves the model to the selected device.
+`predict()` validates the raw keypoints, samples 100 frames, applies the JM
+preprocessing, packs the two-person input, and returns class probabilities.
+The lower-level `forward()` accepts an already-prepared tensor shaped
+`[B, clips, persons, T, V, C]`.
+
+## Architecture and checkpoint
+The internal PyTorch modules preserve the backbone/head state-dict paths:
+`backbone.*` and `cls_head.*`. The graph construction helpers belong to the
+backbone; checkpoint loading and YOLO/JM input handling belong to `STGCNPP`.
+These implementation details are not separate public entry points.
 
 ## Automated verification
-GitHub Actions downloads the official checkpoint, saves it at
-`GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth`, and commits that binary to
-the repository after the compatibility tests pass. The workflow loads the full
-recognizer with `strict=True` and runs a forward pass.
-The test also checks the COCO-17 joint count/order and YOLO tensor adapter.
+GitHub Actions downloads the official JM checkpoint when it is not already
+present, then tests COCO-17 graph order, input validation/preprocessing,
+strict checkpoint loading, state-dict names, and a complete forward pass.
+The standalone test workflow installs only PyTorch, NumPy, and pytest; it does
+not install PYSKL or OpenMMLab packages.
 
-Workflow: `.github/workflows/test-stgcnpp-coco17.yml`
-
-A green workflow is the acceptance criterion for the architecture/checkpoint
-load and model forward test. End-to-end action recognition still requires
-fine-tuning the 60-class pretrained head on the project's target action labels.
+The pretrained head contains 60 NTU RGB+D classes. Fine-tuning is required
+when the target application uses a different action label set.
