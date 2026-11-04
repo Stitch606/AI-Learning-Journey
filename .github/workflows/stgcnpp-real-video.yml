@@ -41,15 +41,15 @@ jobs:
         run: |
           python GCN/STGCNPP/run_video_inference.py \
             --name walking \
-            --video-url "https://videos.pexels.com/video-files/5319934/5319934-sd_640_360_25fps.mp4" \
+            --video-url "https://raw.githubusercontent.com/krithicswaroopan/Human-Centric-Video-Stabilization/main/test_video1.mp4" \
             --checkpoint GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth \
             --device cpu
 
-      - name: Run running video through YOLO pose and standalone ST-GCN++
+      - name: Run second real video through YOLO pose and standalone ST-GCN++
         run: |
           python GCN/STGCNPP/run_video_inference.py \
-            --name running \
-            --video-url "https://videos.pexels.com/video-files/5319940/5319940-sd_640_360_25fps.mp4" \
+            --name walking_sample_2 \
+            --video-url "https://raw.githubusercontent.com/krithicswaroopan/Human-Centric-Video-Stabilization/main/test_video2.mp4" \
             --checkpoint GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth \
             --device cpu
 
