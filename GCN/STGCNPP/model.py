@@ -305,26 +305,48 @@ class STGCNPP(nn.Module):
         if clip_len != 100:
             raise ValueError("This checkpoint expects exactly 100 frames")
 
-        indices = np.linspace(0, len(arr) - 1, clip_len).round().astype(np.int64)
-        sampled = arr[indices].copy()
-
-        # PYSKL PreNormalize2D default mode='fix', img_shape=(height,width).
+        # Match PYSKL test pipeline order:
+        # PreNormalize2D -> GenSkeFeat(JM) -> UniformSample(100).
+        # JM differences are computed on the full sequence before sampling.
+        full = arr.copy()
         h, w = int(image_size[1]), int(image_size[0])
-        xy = sampled[..., :2]
-        score = sampled[..., 2]
-        mask = score > 0.01
+        xy = full[..., :2]
+        score = full[..., 2]
+        maskout = score <= 0.01
         xy[..., 0] = (xy[..., 0] - (w / 2.0)) / (w / 2.0)
         xy[..., 1] = (xy[..., 1] - (h / 2.0)) / (h / 2.0)
-        xy[~mask] = 0.0
+        xy[..., 0][maskout] = 0.0
+        xy[..., 1][maskout] = 0.0
 
-        # PYSKL ToMotion(dataset='coco'): frame differences and adjacent
-        # confidence mean; the final frame remains zero.
-        jm = np.zeros_like(sampled, dtype=np.float32)
-        jm[:-1, :, :2] = np.diff(xy, axis=0)
-        jm[:-1, :, 2] = (score[:-1] + score[1:]) / 2.0
+        jm_full = np.zeros_like(full, dtype=np.float32)
+        jm_full[:-1, :, :2] = np.diff(xy, axis=0)
+        jm_full[:-1, :, 2] = (score[:-1] + score[1:]) / 2.0
+
+        # PYSKL UniformSampleFrames(test_mode=True, num_clips=1,
+        # p_interval=1, seed=255), including modulo looping for short clips.
+        num_frames = len(jm_full)
+        rng = np.random.RandomState(255)
+        rng.rand()  # PYSKL samples ratio even when p_interval=(1, 1).
+        offset = rng.randint(1)  # p_interval=(1, 1), so offset is zero.
+        if num_frames < clip_len:
+            indices = np.arange(clip_len)
+        elif num_frames < clip_len * 2:
+            basic = np.arange(clip_len)
+            chosen = rng.choice(clip_len + 1, num_frames - clip_len, replace=False)
+            offsets = np.zeros(clip_len + 1, dtype=np.int64)
+            offsets[chosen] = 1
+            indices = basic + np.cumsum(offsets)[:-1]
+        else:
+            boundaries = np.array(
+                [i * num_frames // clip_len for i in range(clip_len + 1)])
+            sizes = np.diff(boundaries)
+            indices = boundaries[:clip_len] + np.array(
+                [rng.randint(int(size)) for size in sizes])
+        indices = (indices + offset) % num_frames
+        sampled = jm_full[indices]
 
         packed = np.zeros((1, 1, 2, clip_len, 17, 3), dtype=np.float32)
-        packed[0, 0, 0] = jm
+        packed[0, 0, 0] = sampled
         return packed
 
     def predict(self, keypoints, image_size=(1920, 1080)):
