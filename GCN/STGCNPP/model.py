@@ -349,9 +349,22 @@ class STGCNPP(nn.Module):
         packed[0, 0, 0] = sampled
         return packed
 
-    def predict(self, keypoints, image_size=(1920, 1080)):
-        """Run end-to-end inference from raw [T,17,3] YOLO keypoints."""
-        packed = self.prepare_input(keypoints, image_size=image_size)
+    def predict(self, frame, keypoints):
+        """Run inference from a video frame and its raw YOLO COCO-17 keypoints.
+
+        The frame is used to read the original (width, height) automatically;
+        YOLO must still provide keypoints with shape [T, 17, 3].
+        """
+        if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3):
+            raise TypeError("frame must be an image/frame as a NumPy array")
+        height, width = frame.shape[:2]
+        if height < 1 or width < 1:
+            raise ValueError("frame must have non-zero width and height")
+
+        packed = self.prepare_input(
+            keypoints,
+            image_size=(width, height),
+        )
         tensor = torch.from_numpy(packed).to(self.device)
         self.eval()
         with torch.inference_mode():
