@@ -9,7 +9,7 @@ def search(module_name):
         "m": [],
         "f": [],
         "c": [],
-        "o": []
+        "b": []
     }
 
     for name in dir(module):
@@ -27,7 +27,8 @@ def search(module_name):
         elif inspect.isclass(obj):
             result["c"].append(name)
 
-        else:
-            result["o"].append(name)
-
+        
+        elif inspect.isbuiltin(obj):
+            result["b"].append(name)
+            
     return result
