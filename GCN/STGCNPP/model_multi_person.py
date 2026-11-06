@@ -483,10 +483,6 @@ class STGCNPPMultiPerson(nn.Module):
             }
 
     def forward_logits(self, keypoint):
-        person_logits = self._person_logits(keypoint)
-        return person_logits.mean(dim=1)
-
-    def forward_logits(self, keypoint):
         return self._person_logits(keypoint).mean(dim=1)
 
     def forward(self, keypoint, return_loss=False, **kwargs):
