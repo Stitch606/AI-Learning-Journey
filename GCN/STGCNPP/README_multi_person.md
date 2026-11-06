@@ -34,7 +34,9 @@ keypoints = np.zeros((3, 100, 17, 3), dtype=np.float32)
 
 # Use the original video frame so preprocessing knows width and height.
 frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-result = model.predict(frame, keypoints, topk=5)
+# Optional: preserve IDs emitted by your YOLO tracker.
+tracker_ids = [12, 18, 25]
+result = model.predict(frame, keypoints, topk=5, person_ids=tracker_ids)
 
 print(result["num_persons"])
 print(result["scene"]["action"], result["scene"]["confidence"])
@@ -53,7 +55,9 @@ for person in result["persons"]:
 - `num_persons`: number of actual people supplied (padding slots excluded).
 - `scene`: aggregate prediction across supplied people.
 - `persons`: independent predictions produced by applying the existing
-  classifier layer to each person's pooled backbone features.
+  classifier layer to each person's pooled backbone features. Each item
+  includes `person_id` (the supplied tracker ID, or a 1-based fallback) and
+  `slot_index` (the position in the input tensor).
 - Each prediction includes `class_id`, `action`, `confidence`,
   `top_predictions`, and `probabilities`.
 
