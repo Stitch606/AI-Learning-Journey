@@ -438,7 +438,7 @@ class STGCNPPMultiPerson(nn.Module):
             "probabilities": probabilities.detach().cpu().tolist(),
         }
 
-    def predict(self, frame, keypoints, topk=5):
+    def predict(self, frame, keypoints, topk=5, person_ids=None):
         """Predict scene-level and per-person actions from YOLO COCO-17 tracks.
 
         keypoints may be [T,17,3] for one person or [P,T,17,3] for P people.
@@ -454,6 +454,10 @@ class STGCNPPMultiPerson(nn.Module):
         packed, person_count = self.prepare_input(
             keypoints, image_size=(width, height)
         )
+        if person_ids is not None and len(person_ids) != person_count:
+            raise ValueError(
+                f"person_ids must contain {person_count} IDs, got {len(person_ids)}"
+            )
         tensor = torch.from_numpy(packed).to(self.device)
         self.eval()
         with torch.inference_mode():
@@ -466,7 +470,8 @@ class STGCNPPMultiPerson(nn.Module):
 
             people = [
                 {
-                    "person_id": index + 1,
+                    "person_id": person_ids[index] if person_ids is not None else index + 1,
+                    "slot_index": index,
                     **self._format_prediction(
                         person_probabilities[index], self.class_names, topk
                     ),
