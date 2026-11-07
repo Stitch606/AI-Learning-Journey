@@ -59,7 +59,7 @@ jobs:
 
       - name: Run COCO-17, strict state-dict, and forward tests
         run: |
-          pytest -q GCN/STGCNPP/tests/test_stgcnpp_coco17.py -ra
+          pytest -q GCN/STGCNPP/tests -ra
 
       - name: Commit official checkpoint to repository
         run: |
