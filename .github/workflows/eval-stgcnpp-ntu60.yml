@@ -1,0 +1,54 @@
+name: Evaluate ST-GCN++ per-person predictions on NTU60 XSub
+
+on:
+  push:
+    paths:
+      - "GCN/STGCNPP/model_multi_person.py"
+      - "GCN/STGCNPP/evaluate_ntu60_per_person.py"
+      - ".github/workflows/eval-stgcnpp-ntu60.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ntu60-per-person:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.26.4
+
+      - name: Download official PYSKL NTU60 HRNet annotations
+        run: |
+          set -euo pipefail
+          mkdir -p data/nturgbd
+          curl -fL --retry 5 --retry-delay 5 \
+            "https://download.openmmlab.com/mmaction/pyskl/data/nturgbd/ntu60_hrnet.pkl" \
+            -o data/nturgbd/ntu60_hrnet.pkl
+          test "$(stat -c%s data/nturgbd/ntu60_hrnet.pkl)" -gt 1000000
+          ls -lh data/nturgbd/ntu60_hrnet.pkl
+
+      - name: Evaluate every clip in the official XSub validation split
+        run: |
+          python GCN/STGCNPP/evaluate_ntu60_per_person.py
+
+      - name: Upload per-person evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-per-person-report
+          path: ntu60_per_person_report.json
+          if-no-files-found: warn
