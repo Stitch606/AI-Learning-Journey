@@ -349,21 +349,16 @@ class STGCNPP(nn.Module):
         packed[0, 0, 0] = sampled
         return packed
 
-    def predict(self, frame, keypoints):
-        """Run inference from a video frame and its raw YOLO COCO-17 keypoints.
+    def predict(self, keypoints, image_size=(1920, 1080)):
+        """Run inference from raw YOLO COCO-17 keypoints.
 
-        The frame is used to read the original (width, height) automatically;
-        YOLO must still provide keypoints with shape [T, 17, 3].
+        keypoints has shape [T, 17, 3]. No image/frame is required.
+        image_size is (width, height), matching PreNormalize2D's default
+        image shape of (1920, 1080).
         """
-        if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3):
-            raise TypeError("frame must be an image/frame as a NumPy array")
-        height, width = frame.shape[:2]
-        if height < 1 or width < 1:
-            raise ValueError("frame must have non-zero width and height")
-
         packed = self.prepare_input(
             keypoints,
-            image_size=(width, height),
+            image_size=image_size,
         )
         tensor = torch.from_numpy(packed).to(self.device)
         self.eval()

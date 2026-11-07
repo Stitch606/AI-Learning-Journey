@@ -438,21 +438,22 @@ class STGCNPPMultiPerson(nn.Module):
             "probabilities": probabilities.detach().cpu().tolist(),
         }
 
-    def predict(self, frame, keypoints, topk=5, person_ids=None):
+    def predict(
+        self,
+        keypoints,
+        topk=5,
+        person_ids=None,
+        image_size=(1920, 1080),
+    ):
         """Predict scene-level and per-person actions from YOLO COCO-17 tracks.
 
         keypoints may be [T,17,3] for one person or [P,T,17,3] for P people.
-        Returns a structured dictionary with class names, confidence, top-k
-        predictions, all class probabilities, and each person's prediction.
+        No image/frame is required. image_size is (width, height) and defaults
+        to PreNormalize2D's original (1920, 1080) image shape.
+        Returns scene-level and per-person predictions.
         """
-        if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3):
-            raise TypeError("frame must be an image/frame as a NumPy array")
-        height, width = frame.shape[:2]
-        if height < 1 or width < 1:
-            raise ValueError("frame must have non-zero width and height")
-
         packed, person_count = self.prepare_input(
-            keypoints, image_size=(width, height)
+            keypoints, image_size=image_size
         )
         if person_ids is not None and len(person_ids) != person_count:
             raise ValueError(
