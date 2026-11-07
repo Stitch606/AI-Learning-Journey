@@ -187,6 +187,18 @@ def main():
         key: value.detach().cpu().clone()
         for key, value in model.state_dict().items()
     }
+    # Always publish a usable checkpoint, even if fine-tuning does not beat
+    # the starting validation score during the allotted run.
+    torch.save(
+        {
+            "state_dict": best_state,
+            "fine_tuned": False,
+            "base_checkpoint": CHECKPOINT.name,
+            "epoch": 0,
+            "validation": baseline,
+        },
+        OUTPUT_CHECKPOINT,
+    )
     history = []
 
     for epoch in range(1, EPOCHS + 1):
