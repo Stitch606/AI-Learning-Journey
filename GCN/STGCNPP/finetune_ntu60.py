@@ -54,7 +54,7 @@ class NTU60PersonDataset(Dataset):
 
 
 def collate_batch(items):
-    inputs = torch.stack([item[0] for item in items], dim=0)
+    inputs = torch.stack([item[0] for item in items], dim=0).unsqueeze(1)
     valid = torch.stack([item[1] for item in items], dim=0)
     labels = torch.tensor([item[2] for item in items], dtype=torch.long)
     return inputs, valid, labels
