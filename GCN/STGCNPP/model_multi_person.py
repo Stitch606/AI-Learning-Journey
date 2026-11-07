@@ -270,7 +270,7 @@ class STGCNPPMultiPerson(nn.Module):
             raise ValueError("max_persons must be a positive integer")
         self.max_persons = max_persons
         self.num_classes = num_classes
-        self.backbone = STGCNBackbone(num_person=max_persons)
+        self.backbone = STGCNBackbone(num_person=2)
         self.cls_head = GCNHead(num_classes=num_classes, in_channels=256)
         self.device = torch.device(device)
         self.class_names = self._load_class_names(class_names, num_classes)
@@ -368,7 +368,6 @@ class STGCNPPMultiPerson(nn.Module):
         arr = cls.validate_keypoints(keypoints)
         if clip_len != 100:
             raise ValueError("This checkpoint expects exactly 100 frames")
-        cls._validate_person_sequence(arr, image_size=image_size)
 
         full = arr.copy()
         h, w = int(image_size[1]), int(image_size[0])
@@ -452,7 +451,7 @@ class STGCNPPMultiPerson(nn.Module):
             )
 
         packed = np.zeros(
-            (1, 1, self.max_persons, clip_len, 17, 3), dtype=np.float32
+            (1, 1, person_count, clip_len, 17, 3), dtype=np.float32
         )
         for person_index in range(person_count):
             packed[0, 0, person_index] = self._prepare_single_person(
@@ -461,17 +460,30 @@ class STGCNPPMultiPerson(nn.Module):
         return packed, person_count
 
     def _person_logits(self, keypoint):
-        """Return logits per person, preserving the trained classifier weights."""
+        """Classify each tracked person through the original two-person GCN head.
+
+        Each person is evaluated as one sample with the checkpoint's expected
+        person dimension (M=2): the tracked person plus one zero-padded slot.
+        """
         if keypoint.ndim != 6:
             raise ValueError("Expected [B, clips, persons, T, V, C] input")
-        b, clips, persons = keypoint.shape[:3]
-        x = keypoint.reshape((b * clips,) + keypoint.shape[2:])
-        features = self.backbone(x)  # [B*clips, persons, C, T, V]
-        pooled = torch.nn.functional.adaptive_avg_pool2d(
-            features.reshape(b * clips * persons, *features.shape[2:]), 1
-        ).reshape(b * clips, persons, -1)
-        logits = self.cls_head.fc_cls(pooled)
-        return logits.reshape(b, clips, persons, self.num_classes).mean(dim=1)
+        b, clips, persons, t, v, c = keypoint.shape
+
+        # Make one independent sample per tracked person and clip.
+        person_samples = (
+            keypoint.permute(0, 2, 1, 3, 4, 5)
+            .reshape(b * persons * clips, t, v, c)
+        )
+        model_input = person_samples.new_zeros(
+            (b * persons * clips, 2, t, v, c)
+        )
+        model_input[:, 0] = person_samples
+
+        # Use the original GCNHead.forward: pool T,V, then average M=2,
+        # then apply fc_cls. Do not apply fc_cls separately to each M slot.
+        features = self.backbone(model_input)
+        logits = self.cls_head(features)
+        return logits.reshape(b, persons, clips, self.num_classes)
 
     @staticmethod
     def _format_prediction(probabilities, class_names, topk):
@@ -548,7 +560,7 @@ class STGCNPPMultiPerson(nn.Module):
         # Prepare every clip/person sequence. The frame dimension is metadata
         # only; no image or video frame is passed to the recognizer.
         packed = np.zeros(
-            (batch_size, num_clips, self.max_persons, 100, 17, 3),
+            (batch_size, num_clips, person_count, 100, 17, 3),
             dtype=np.float32,
         )
         for b in range(batch_size):
@@ -565,12 +577,14 @@ class STGCNPPMultiPerson(nn.Module):
         with torch.inference_mode():
             batch_logits = self._person_logits(tensor)
             for b in range(batch_size):
-                person_logits = batch_logits[b, :person_count]
-                person_probabilities = torch.softmax(person_logits, dim=-1)
+                # PYSKL averages clip probabilities at test time.
+                person_probabilities = torch.softmax(
+                    batch_logits[b], dim=-1
+                ).mean(dim=1)
 
-                # Aggregate only real people; padded slots are excluded.
-                scene_logits = person_logits.mean(dim=0)
-                scene_probabilities = torch.softmax(scene_logits, dim=-1)
+                # This is an aggregate of independent person predictions,
+                # not a joint interaction prediction from multiple skeletons.
+                scene_probabilities = person_probabilities.mean(dim=0)
 
                 people = [
                     {
@@ -594,9 +608,11 @@ class STGCNPPMultiPerson(nn.Module):
         return outputs[0] if batch_size == 1 else outputs
 
     def forward_logits(self, keypoint):
-        return self._person_logits(keypoint).mean(dim=1)
+        # Aggregate person and clip logits for callers that need one score vector.
+        return self._person_logits(keypoint).mean(dim=(1, 2))
 
     def forward(self, keypoint, return_loss=False, **kwargs):
-        logits = self.forward_logits(keypoint)
-        # PYSKL RecognizerGCN defaults to average_clips='prob'.
-        return torch.softmax(logits, dim=-1)
+        # Match PYSKL average_clips='prob', then aggregate independent people.
+        person_logits = self._person_logits(keypoint)
+        person_probabilities = torch.softmax(person_logits, dim=-1).mean(dim=2)
+        return person_probabilities.mean(dim=1)
