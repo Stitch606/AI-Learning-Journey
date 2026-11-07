@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 import pickle
+import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import torch
 
+ROOT = Path(__file__).resolve().parents[2]
+# Running this file by path puts GCN/STGCNPP, not the repository root, on
+# sys.path. Add the root explicitly so the repository package imports work
+# the same way in GitHub Actions and from a local checkout.
+sys.path.insert(0, str(ROOT))
+
 from GCN.STGCNPP.model_multi_person import STGCNPPMultiPerson
 
 
-ROOT = Path(__file__).resolve().parents[2]
 DATA_PATH = ROOT / "data" / "nturgbd" / "ntu60_hrnet.pkl"
 CHECKPOINT = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
 REPORT = ROOT / "ntu60_per_person_report.json"
@@ -43,7 +49,7 @@ def test_sample_indices(num_frames: int, motion: np.ndarray) -> np.ndarray:
 
     indices = indices % num_frames
 
-    # PYSKL avoids sampling across transitions in the number of visible people.
+    # Match PYSKL UniformSampleFrames' person-count transition correction.
     person_counts = np.zeros(num_frames, dtype=np.int64)
     for frame in range(num_frames):
         count = motion.shape[0]
@@ -58,7 +64,10 @@ def test_sample_indices(num_frames: int, motion: np.ndarray) -> np.ndarray:
         if person_counts[frame] != person_counts[frame + 1]:
             transitional[frame] = transitional[frame + 1] = True
 
-    return indices.astype(np.int64)
+    indices_int = indices.astype(np.int64)
+    coeff = transitional[indices_int]
+    indices = (coeff * indices_int + (1 - coeff) * indices).astype(np.int64)
+    return indices
 
 
 def preprocess_annotation(annotation: dict):
