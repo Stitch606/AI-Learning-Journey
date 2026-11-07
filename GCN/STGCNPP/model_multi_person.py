@@ -246,7 +246,7 @@ class GCNHead(nn.Module):
         n, m, c, t, v = x.shape
         x = x.reshape(n * m, c, t, v)
         x = torch.nn.functional.adaptive_avg_pool2d(x, 1)
-        x = x.reshape(n, m, c).mean(dim=1)
+        x = x.reshape(n, m, c)
         return self.fc_cls(x)
 
 
@@ -429,7 +429,7 @@ class STGCNPPMultiPerson(nn.Module):
         return [f"class_{i}" for i in range(num_classes)]
 
     def prepare_input(self, keypoints, image_size=(1920, 1080), clip_len=100):
-        """Pack one or more synchronized people into [1,1,max_persons,100,17,3].
+        """Pack synchronized people into [1,1,P,100,17,3].
 
         Accepted inputs:
           [T,17,3]       one person
@@ -450,13 +450,12 @@ class STGCNPPMultiPerson(nn.Module):
                 f"Received {person_count} people, but max_persons={self.max_persons}"
             )
 
-        # One independent batch item per tracked person. Each item keeps
-        # the checkpoint's original M=2 layout: one person plus one zero slot.
+        # Keep the person axis explicit. No dummy person slot is added.
         packed = np.zeros(
-            (person_count, 1, 2, clip_len, 17, 3), dtype=np.float32
+            (1, 1, person_count, clip_len, 17, 3), dtype=np.float32
         )
         for person_index in range(person_count):
-            packed[person_index, 0, 0] = self._prepare_single_person(
+            packed[0, 0, person_index] = self._prepare_single_person(
                 arr[person_index], image_size=image_size, clip_len=clip_len
             )
         return packed, person_count
@@ -471,20 +470,14 @@ class STGCNPPMultiPerson(nn.Module):
             raise ValueError("Expected [B, clips, persons, T, V, C] input")
         b, clips, persons, t, v, c = keypoint.shape
 
-        # Make one independent sample per tracked person and clip.
+        # Flatten only for efficient execution. Each row is one real person
+        # and has M=1; no synthetic person slot or cross-person pooling exists.
         person_samples = (
             keypoint.permute(0, 2, 1, 3, 4, 5)
-            .reshape(b * persons * clips, t, v, c)
+            .reshape(b * persons * clips, 1, t, v, c)
         )
-        model_input = person_samples.new_zeros(
-            (b * persons * clips, 2, t, v, c)
-        )
-        model_input[:, 0] = person_samples
-
-        # Use the original GCNHead.forward: pool T,V, then average M=2,
-        # then apply fc_cls. Do not apply fc_cls separately to each M slot.
-        features = self.backbone(model_input)
-        logits = self.cls_head(features)
+        features = self.backbone(person_samples)
+        logits = self.cls_head(features)  # [B*P*clips, 1, classes]
         return logits.reshape(b, persons, clips, self.num_classes)
 
     @staticmethod
@@ -584,10 +577,6 @@ class STGCNPPMultiPerson(nn.Module):
                     batch_logits[b], dim=-1
                 ).mean(dim=1)
 
-                # This is an aggregate of independent person predictions,
-                # not a joint interaction prediction from multiple skeletons.
-                scene_probabilities = person_probabilities.mean(dim=0)
-
                 people = [
                     {
                         "person_id": person_ids[index] if person_ids is not None else index + 1,
@@ -601,33 +590,26 @@ class STGCNPPMultiPerson(nn.Module):
                 outputs.append({
                     "num_persons": person_count,
                     "max_persons": self.max_persons,
-                    "scene": self._format_prediction(
-                        scene_probabilities, self.class_names, topk
-                    ),
                     "persons": people,
                 })
 
         return outputs[0] if batch_size == 1 else outputs
 
-    def _scene_clip_logits(self, keypoint):
-        """Original PYSKL scene-level path for a two-person skeleton input."""
+    def _person_clip_logits(self, keypoint):
+        """Return independent logits with shape [B, clips, persons, classes]."""
         if keypoint.ndim != 6:
-            raise ValueError("Expected [B, clips, 2, T, V, C] input")
+            raise ValueError("Expected [B, clips, persons, T, V, C] input")
         b, clips, persons = keypoint.shape[:3]
-        if persons != 2:
-            raise ValueError(
-                f"The checkpoint expects exactly 2 person slots, got {persons}"
-            )
         x = keypoint.reshape((b * clips,) + keypoint.shape[2:])
         features = self.backbone(x)
-        logits = self.cls_head(features)
-        return logits.reshape(b, clips, self.num_classes)
+        logits = self.cls_head(features)  # [B*clips, persons, classes]
+        return logits.reshape(b, clips, persons, self.num_classes)
 
     def forward_logits(self, keypoint):
-        # Logit average is useful for callers; inference probabilities below
-        # follow PYSKL's average_clips='prob' behavior exactly.
-        return self._scene_clip_logits(keypoint).mean(dim=1)
+        # Average only test-time clips; the person axis is always preserved.
+        return self._person_clip_logits(keypoint).mean(dim=1)
 
     def forward(self, keypoint, return_loss=False, **kwargs):
-        clip_logits = self._scene_clip_logits(keypoint)
+        # Output: [B, persons, classes], never a scene-level person average.
+        clip_logits = self._person_clip_logits(keypoint)
         return torch.softmax(clip_logits, dim=-1).mean(dim=1)
