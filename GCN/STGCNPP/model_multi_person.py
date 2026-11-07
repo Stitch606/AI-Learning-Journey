@@ -242,25 +242,11 @@ class GCNHead(nn.Module):
         self.fc_cls = nn.Linear(in_channels, num_classes)
 
     def forward(self, x):
-        # Original scene-level behavior, retained for checkpoint compatibility.
+        # Backbone output: N, M, C, T, V
         n, m, c, t, v = x.shape
         x = x.reshape(n * m, c, t, v)
         x = torch.nn.functional.adaptive_avg_pool2d(x, 1)
         x = x.reshape(n, m, c).mean(dim=1)
-        return self.fc_cls(x)
-
-    def forward_personwise(self, x):
-        # Backbone output: N, M, C, T, V.
-        # Return one classification per person; never average across M.
-        n, m, c, t, v = x.shape
-        x = x.reshape(n * m, c, t, v)
-        x = torch.nn.functional.adaptive_avg_pool2d(x, 1)
-        x = x.reshape(n, m, c)
-
-        # The checkpoint's original head averaged two person slots.
-        # In this per-person path, preserve that trained feature scale
-        # without mixing different people: each person's feature is halved.
-        x = x * 0.5
         return self.fc_cls(x)
 
 
@@ -476,20 +462,30 @@ class STGCNPPMultiPerson(nn.Module):
         return packed, person_count
 
     def _person_logits(self, keypoint):
-        """Classify each tracked person independently, with no dummy person slot."""
+        """Classify each tracked person through the original two-person GCN head.
+
+        Each person is evaluated as one sample with the checkpoint's expected
+        person dimension (M=2): the tracked person plus one zero-padded slot.
+        """
         if keypoint.ndim != 6:
             raise ValueError("Expected [B, clips, persons, T, V, C] input")
         b, clips, persons, t, v, c = keypoint.shape
 
-        # Each tracked person/clip becomes an independent M=1 backbone sample.
+        # Make one independent sample per tracked person and clip.
         person_samples = (
             keypoint.permute(0, 2, 1, 3, 4, 5)
-            .reshape(b * persons * clips, 1, t, v, c)
+            .reshape(b * persons * clips, t, v, c)
         )
+        model_input = person_samples.new_zeros(
+            (b * persons * clips, 2, t, v, c)
+        )
+        model_input[:, 0] = person_samples
 
-        features = self.backbone(person_samples)
-        logits = self.cls_head.forward_personwise(features)
-        return logits[:, 0].reshape(b, persons, clips, self.num_classes)
+        # Use the original GCNHead.forward: pool T,V, then average M=2,
+        # then apply fc_cls. Do not apply fc_cls separately to each M slot.
+        features = self.backbone(model_input)
+        logits = self.cls_head(features)
+        return logits.reshape(b, persons, clips, self.num_classes)
 
     @staticmethod
     def _format_prediction(probabilities, class_names, topk):
