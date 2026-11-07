@@ -107,7 +107,12 @@ def preprocess_annotation(annotation: dict):
 
     # Exact FormatGCNInput(num_person=2, mode='zero'): truncate/pad on M.
     actual_persons = min(persons, NUM_PERSONS)
-    valid = np.any(sampled_scores[:actual_persons] > 0.01, axis=(1, 2))
+    # Keep the person-validity mask fixed at NUM_PERSONS so batches can be
+    # stacked even when annotations contain different numbers of people.
+    valid = np.zeros(NUM_PERSONS, dtype=bool)
+    valid[:actual_persons] = np.any(
+        sampled_scores[:actual_persons] > 0.01, axis=(1, 2)
+    )
     packed = np.zeros((NUM_PERSONS, CLIP_LEN, 17, 3), dtype=np.float32)
     packed[:actual_persons] = sampled[:actual_persons]
     return packed, valid
