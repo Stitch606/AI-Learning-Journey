@@ -32,11 +32,12 @@ model = STGCNPPMultiPerson(
 # last dimension is x, y, confidence.
 keypoints = np.zeros((3, 100, 17, 3), dtype=np.float32)
 
-# Use the original video frame so preprocessing knows width and height.
-frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+# Optional: set the actual video dimensions as (width, height).
+# The default is the original PreNormalize2D size: (1920, 1080).
+# No image or video frame is passed to ST-GCN++; it receives keypoints only.
 # Optional: preserve IDs emitted by your YOLO tracker.
 tracker_ids = [12, 18, 25]
-result = model.predict(frame, keypoints, topk=5, person_ids=tracker_ids)
+result = model.predict(keypoints, topk=5, person_ids=tracker_ids)
 
 print(result["num_persons"])
 print(result["scene"]["action"], result["scene"]["confidence"])
