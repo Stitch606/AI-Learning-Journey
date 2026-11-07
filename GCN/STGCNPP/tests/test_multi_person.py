@@ -6,9 +6,13 @@ import pytest
 import torch
 
 # Ensure the repository root is importable when pytest selects this test folder.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 
 from GCN.STGCNPP.model_multi_person import STGCNPPMultiPerson
+
+
+CHECKPOINT = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
 
 
 def test_prepare_input_packs_up_to_ten_people():
@@ -27,18 +31,35 @@ def test_prepare_input_rejects_more_than_configured_limit():
         model.prepare_input(keypoints)
 
 
-def test_forward_accepts_ten_person_dimension():
+def test_forward_preserves_person_axis_for_ten_people():
     model = STGCNPPMultiPerson(num_classes=60, max_persons=10)
     model.eval()
-    batch = torch.zeros(1, 1, 10, 100, 17, 3)
+    batch = torch.randn(1, 1, 10, 100, 17, 3)
     with torch.inference_mode():
         probabilities = model(batch)
-    assert probabilities.shape == (1, 60)
+    assert probabilities.shape == (1, 10, 60)
     assert torch.allclose(
         probabilities.sum(dim=-1),
-        torch.ones(1),
+        torch.ones(1, 10),
         atol=1e-5,
     )
+
+
+def test_checkpoint_loads_strictly_and_keeps_person_axis():
+    assert CHECKPOINT.is_file(), f"Missing checkpoint: {CHECKPOINT}"
+    model = STGCNPPMultiPerson(
+        checkpoint_path=CHECKPOINT,
+        num_classes=60,
+        device="cpu",
+        strict=True,
+        max_persons=3,
+    )
+    model.eval()
+    batch = torch.randn(1, 1, 3, 100, 17, 3)
+    with torch.inference_mode():
+        probabilities = model(batch)
+    assert probabilities.shape == (1, 3, 60)
+    assert torch.isfinite(probabilities).all()
 
 
 def test_class_names_match_ntu60_checkpoint():
