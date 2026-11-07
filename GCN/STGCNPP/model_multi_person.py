@@ -308,11 +308,67 @@ class STGCNPPMultiPerson(nn.Module):
         return arr
 
     @classmethod
+    def _validate_person_sequence(cls, keypoints, image_size=(1920, 1080)):
+        """Reject malformed/non-person-like raw YOLO COCO-17 sequences."""
+        arr = cls.validate_keypoints(keypoints)
+        if len(image_size) != 2:
+            raise ValueError("image_size must be (width, height)")
+        w, h = int(image_size[0]), int(image_size[1])
+        if w <= 0 or h <= 0:
+            raise ValueError("image_size values must be positive")
+
+        xy = arr[..., :2]
+        scores = arr[..., 2]
+        visible = scores >= 0.10
+        visible_counts = visible.sum(axis=1)
+        if np.median(visible_counts) < 5:
+            raise ValueError(
+                "Rejected keypoints: fewer than 5 visible joints in a typical frame"
+            )
+
+        visible_xy = xy[visible]
+        if visible_xy.size == 0:
+            raise ValueError("Rejected keypoints: no visible joints")
+
+        outside = (
+            (visible_xy[:, 0] < -0.05 * w) |
+            (visible_xy[:, 0] > 1.05 * w) |
+            (visible_xy[:, 1] < -0.05 * h) |
+            (visible_xy[:, 1] > 1.05 * h)
+        )
+        if outside.mean() > 0.20:
+            raise ValueError(
+                "Rejected keypoints: too many confident joints are outside the image; "
+                "expected raw pixel coordinates from YOLO Pose"
+            )
+
+        widths = []
+        heights = []
+        for frame_xy, frame_visible in zip(xy, visible):
+            points = frame_xy[frame_visible]
+            if len(points) < 5:
+                continue
+            widths.append(float(np.ptp(points[:, 0])))
+            heights.append(float(np.ptp(points[:, 1])))
+
+        min_width = max(8.0, 0.005 * w)
+        min_height = max(8.0, 0.005 * h)
+        if not widths or np.median(widths) < min_width or np.median(heights) < min_height:
+            raise ValueError(
+                "Rejected keypoints: the detected joints occupy an implausibly tiny "
+                "area. Pass pixel coordinates (x, y, confidence), not normalized or "
+                "random values."
+            )
+
+        return arr
+
+    @classmethod
     def _prepare_single_person(cls, keypoints, image_size=(1920, 1080), clip_len=100):
         """Convert one person's raw YOLO sequence [T,17,3] to JM [100,17,3]."""
         arr = cls.validate_keypoints(keypoints)
         if clip_len != 100:
             raise ValueError("This checkpoint expects exactly 100 frames")
+        cls._validate_person_sequence(arr, image_size=image_size)
 
         full = arr.copy()
         h, w = int(image_size[1]), int(image_size[0])
