@@ -11,7 +11,7 @@ import torch
 from GCN.STGCNPP.model_multi_person import STGCNPPMultiPerson
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 DATA_PATH = ROOT / "data" / "nturgbd" / "ntu60_hrnet.pkl"
 CHECKPOINT = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
 REPORT = ROOT / "ntu60_per_person_report.json"
