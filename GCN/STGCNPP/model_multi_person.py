@@ -461,24 +461,22 @@ class STGCNPPMultiPerson(nn.Module):
         return packed, person_count
 
     def _person_logits(self, keypoint):
-        """Classify each tracked person through the original two-person GCN head.
+        """Return one independent class-logit vector for every person.
 
-        Each person is evaluated as one sample with the checkpoint's expected
-        person dimension (M=2): the tracked person plus one zero-padded slot.
+        Input: [B, clips, persons, T, V, C]
+        Output: [B, persons, clips, classes]
         """
         if keypoint.ndim != 6:
             raise ValueError("Expected [B, clips, persons, T, V, C] input")
         b, clips, persons, t, v, c = keypoint.shape
 
-        # Flatten only for efficient execution. Each row is one real person
-        # and has M=1; no synthetic person slot or cross-person pooling exists.
-        person_samples = (
-            keypoint.permute(0, 2, 1, 3, 4, 5)
-            .reshape(b * persons * clips, 1, t, v, c)
-        )
-        features = self.backbone(person_samples)
-        logits = self.cls_head(features)  # [B*P*clips, 1, classes]
-        return logits.reshape(b, persons, clips, self.num_classes)
+        # Keep all real people on the person axis through the backbone.
+        # The backbone applies shared weights per person; the head classifies
+        # each person's pooled feature independently without reducing P.
+        model_input = keypoint.reshape(b * clips, persons, t, v, c)
+        features = self.backbone(model_input)   # [B*clips, P, C, T', V]
+        logits = self.cls_head(features)        # [B*clips, P, classes]
+        return logits.reshape(b, clips, persons, self.num_classes).permute(0, 2, 1, 3)
 
     @staticmethod
     def _format_prediction(probabilities, class_names, topk):
