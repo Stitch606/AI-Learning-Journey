@@ -450,11 +450,13 @@ class STGCNPPMultiPerson(nn.Module):
                 f"Received {person_count} people, but max_persons={self.max_persons}"
             )
 
+        # One independent batch item per tracked person. Each item keeps
+        # the checkpoint's original M=2 layout: one person plus one zero slot.
         packed = np.zeros(
-            (1, 1, person_count, clip_len, 17, 3), dtype=np.float32
+            (person_count, 1, 2, clip_len, 17, 3), dtype=np.float32
         )
         for person_index in range(person_count):
-            packed[0, 0, person_index] = self._prepare_single_person(
+            packed[person_index, 0, 0] = self._prepare_single_person(
                 arr[person_index], image_size=image_size, clip_len=clip_len
             )
         return packed, person_count
@@ -607,12 +609,25 @@ class STGCNPPMultiPerson(nn.Module):
 
         return outputs[0] if batch_size == 1 else outputs
 
+    def _scene_clip_logits(self, keypoint):
+        """Original PYSKL scene-level path for a two-person skeleton input."""
+        if keypoint.ndim != 6:
+            raise ValueError("Expected [B, clips, 2, T, V, C] input")
+        b, clips, persons = keypoint.shape[:3]
+        if persons != 2:
+            raise ValueError(
+                f"The checkpoint expects exactly 2 person slots, got {persons}"
+            )
+        x = keypoint.reshape((b * clips,) + keypoint.shape[2:])
+        features = self.backbone(x)
+        logits = self.cls_head(features)
+        return logits.reshape(b, clips, self.num_classes)
+
     def forward_logits(self, keypoint):
-        # Aggregate person and clip logits for callers that need one score vector.
-        return self._person_logits(keypoint).mean(dim=(1, 2))
+        # Logit average is useful for callers; inference probabilities below
+        # follow PYSKL's average_clips='prob' behavior exactly.
+        return self._scene_clip_logits(keypoint).mean(dim=1)
 
     def forward(self, keypoint, return_loss=False, **kwargs):
-        # Match PYSKL average_clips='prob', then aggregate independent people.
-        person_logits = self._person_logits(keypoint)
-        person_probabilities = torch.softmax(person_logits, dim=-1).mean(dim=2)
-        return person_probabilities.mean(dim=1)
+        clip_logits = self._scene_clip_logits(keypoint)
+        return torch.softmax(clip_logits, dim=-1).mean(dim=1)
