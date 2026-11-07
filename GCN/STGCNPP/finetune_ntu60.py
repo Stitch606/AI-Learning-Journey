@@ -31,8 +31,7 @@ BATCH_SIZE = 16
 EPOCHS = 4
 LEARNING_RATE = 1e-5
 WEIGHT_DECAY = 1e-4
-SCENE_LOSS_WEIGHT = 0.5
-PERSON_LOSS_WEIGHT = 0.5
+PERSON_LOSS_WEIGHT = 1.0
 SEED = 255
 
 
@@ -64,7 +63,6 @@ def collate_batch(items):
 def evaluate(model, loader, device):
     model.eval()
     person_total = person_correct = 0
-    scene_total = scene_correct = 0
     loss_sum = 0.0
     batches = 0
 
@@ -74,28 +72,21 @@ def evaluate(model, loader, device):
         labels = labels.to(device)
 
         logits = model._person_logits(inputs)[:, :, 0, :]
-        scene_logits = logits.mean(dim=1)
-
-        scene_loss = F.cross_entropy(scene_logits, labels)
-        loss_sum += float(scene_loss.item())
-        batches += 1
-
-        scene_pred = scene_logits.argmax(dim=-1)
-        scene_correct += int((scene_pred == labels).sum().item())
-        scene_total += int(labels.numel())
-
         person_pred = logits.argmax(dim=-1)
         if valid.any():
             expanded_labels = labels[:, None].expand_as(person_pred)
-            person_correct += int(((person_pred == expanded_labels) & valid).sum().item())
+            person_logits = logits[valid]
+            person_targets = expanded_labels[valid]
+            person_loss = F.cross_entropy(person_logits, person_targets)
+            loss_sum += float(person_loss.item())
+            batches += 1
+            person_correct += int((person_pred[valid] == person_targets).sum().item())
             person_total += int(valid.sum().item())
 
     return {
         "loss": loss_sum / max(batches, 1),
         "per_person_top1_accuracy": person_correct / max(person_total, 1),
-        "scene_top1_accuracy": scene_correct / max(scene_total, 1),
         "person_predictions": person_total,
-        "scene_samples": scene_total,
     }
 
 
@@ -182,7 +173,6 @@ def main():
     )
 
     best_metric = baseline["per_person_top1_accuracy"]
-    best_scene_metric = baseline["scene_top1_accuracy"]
     best_state = {
         key: value.detach().cpu().clone()
         for key, value in model.state_dict().items()
@@ -214,19 +204,12 @@ def main():
 
             optimizer.zero_grad(set_to_none=True)
             logits = model._person_logits(inputs)[:, :, 0, :]
-            scene_logits = logits.mean(dim=1)
-
-            scene_loss = F.cross_entropy(scene_logits, labels)
             if valid.any():
                 person_labels = labels[:, None].expand(-1, logits.shape[1])
-                person_loss = F.cross_entropy(logits[valid], person_labels[valid])
-                loss = (
-                    SCENE_LOSS_WEIGHT * scene_loss
-                    + PERSON_LOSS_WEIGHT * person_loss
-                )
+                loss = F.cross_entropy(logits[valid], person_labels[valid])
             else:
                 skipped += 1
-                loss = scene_loss
+                continue
 
             if not torch.isfinite(loss):
                 raise FloatingPointError(
@@ -262,12 +245,8 @@ def main():
         print("EPOCH_RESULT=" + json.dumps(record), flush=True)
 
         metric = validation["per_person_top1_accuracy"]
-        scene_metric = validation["scene_top1_accuracy"]
-        if (metric > best_metric) or (
-            metric == best_metric and scene_metric > best_scene_metric
-        ):
+        if metric > best_metric:
             best_metric = metric
-            best_scene_metric = scene_metric
             best_state = {
                 key: value.detach().cpu().clone()
                 for key, value in model.state_dict().items()
@@ -287,7 +266,6 @@ def main():
                         "weight_decay": WEIGHT_DECAY,
                         "batch_size": BATCH_SIZE,
                         "epochs_requested": EPOCHS,
-                        "scene_loss_weight": SCENE_LOSS_WEIGHT,
                         "person_loss_weight": PERSON_LOSS_WEIGHT,
                     },
                 },
@@ -317,16 +295,11 @@ def main():
             best_validation["per_person_top1_accuracy"]
             - baseline["per_person_top1_accuracy"]
         ),
-        "scene_absolute_gain": (
-            best_validation["scene_top1_accuracy"]
-            - baseline["scene_top1_accuracy"]
-        ),
         "training": {
             "epochs_requested": EPOCHS,
             "learning_rate": LEARNING_RATE,
             "weight_decay": WEIGHT_DECAY,
             "batch_size": BATCH_SIZE,
-            "scene_loss_weight": SCENE_LOSS_WEIGHT,
             "person_loss_weight": PERSON_LOSS_WEIGHT,
             "all_backbone_and_classifier_parameters_trainable": True,
             "person_supervision_note": (
