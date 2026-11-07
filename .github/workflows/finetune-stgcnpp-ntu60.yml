@@ -1,0 +1,63 @@
+name: Fine-tune ST-GCN++ on official NTU60 XSub
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "GCN/STGCNPP/finetune_ntu60.py"
+      - "GCN/STGCNPP/evaluate_ntu60_per_person.py"
+      - "GCN/STGCNPP/model_multi_person.py"
+      - ".github/workflows/finetune-stgcnpp-ntu60.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fine-tune:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU training dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.26.4
+
+      - name: Download official PYSKL NTU60 HRNet annotations
+        run: |
+          set -euo pipefail
+          mkdir -p data/nturgbd
+          curl -fL --retry 5 --retry-delay 5 \
+            "https://download.openmmlab.com/mmaction/pyskl/data/nturgbd/ntu60_hrnet.pkl" \
+            -o data/nturgbd/ntu60_hrnet.pkl
+          test "$(stat -c%s data/nturgbd/ntu60_hrnet.pkl)" -gt 1000000
+          ls -lh data/nturgbd/ntu60_hrnet.pkl
+
+      - name: Fine-tune all ST-GCN++ parameters on xsub_train
+        run: |
+          set -euo pipefail
+          python GCN/STGCNPP/finetune_ntu60.py
+
+      - name: Upload fine-tuned checkpoint and validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-finetuned
+          path: |
+            GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
+            finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+            finetune_outputs/finetune_report.json
+          if-no-files-found: warn
+          retention-days: 30
