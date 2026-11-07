@@ -33,12 +33,23 @@ def test_forward_accepts_ten_person_dimension():
     batch = torch.zeros(1, 1, 10, 100, 17, 3)
     with torch.inference_mode():
         probabilities = model(batch)
-    assert probabilities.shape == (1, 60)
+    assert probabilities.shape == (1, 10, 60)
     assert torch.allclose(
         probabilities.sum(dim=-1),
-        torch.ones(1),
+        torch.ones(1, 10),
         atol=1e-5,
     )
+
+
+def test_predict_returns_only_independent_person_results():
+    model = STGCNPPMultiPerson(num_classes=60, max_persons=10)
+    keypoints = np.zeros((3, 100, 17, 3), dtype=np.float32)
+    keypoints[..., 2] = 0.8
+    result = model.predict(keypoints, person_ids=[12, 18, 25])
+    assert result["num_persons"] == 3
+    assert "scene" not in result
+    assert [person["person_id"] for person in result["persons"]] == [12, 18, 25]
+    assert len(result["persons"]) == 3
 
 
 def test_class_names_match_ntu60_checkpoint():
