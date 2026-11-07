@@ -438,54 +438,104 @@ class STGCNPPMultiPerson(nn.Module):
             "probabilities": probabilities.detach().cpu().tolist(),
         }
 
-    def predict(self, frame, keypoints, topk=5, person_ids=None):
-        """Predict scene-level and per-person actions from YOLO COCO-17 tracks.
+    def predict(self, keypoints, topk=5, person_ids=None,
+                image_size=(1920, 1080)):
+        """Predict actions directly from keypoint data; no video frame is required.
 
-        keypoints may be [T,17,3] for one person or [P,T,17,3] for P people.
-        Returns a structured dictionary with class names, confidence, top-k
-        predictions, all class probabilities, and each person's prediction.
+        Accepted raw input layouts:
+          [T, 17, 3]                 one person, one clip
+          [P, T, 17, 3]              multiple people, one clip
+          [B, clips, T, P, 17, 3]    streaming batches as collected frame-first
+
+        The streaming layout is reordered internally to the model layout
+        [B, clips, P, T, 17, 3]. image_size is (width, height), matching
+        PYSKL PreNormalize2D's default image shape of (1080, 1920).
         """
-        if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3):
-            raise TypeError("frame must be an image/frame as a NumPy array")
-        height, width = frame.shape[:2]
-        if height < 1 or width < 1:
-            raise ValueError("frame must have non-zero width and height")
+        if torch.is_tensor(keypoints):
+            arr = keypoints.detach().cpu().numpy().astype(np.float32, copy=False)
+        else:
+            arr = np.asarray(keypoints, dtype=np.float32)
 
-        packed, person_count = self.prepare_input(
-            keypoints, image_size=(width, height)
-        )
+        if arr.ndim == 3:
+            # [T, V, C] -> [B=1, clips=1, T, P=1, V, C]
+            arr = arr[None, None, :, None, :, :]
+        elif arr.ndim == 4:
+            # Existing raw multi-person API: [P, T, V, C]
+            arr = arr[None, None, :, :, :, :].transpose(0, 1, 3, 2, 4, 5)
+        elif arr.ndim != 6:
+            raise ValueError(
+                "Expected [T,17,3], [P,T,17,3], or "
+                "[B,clips,T,P,17,3] keypoints"
+            )
+
+        if arr.shape[-2:] != (17, 3):
+            raise ValueError(
+                f"Expected final dimensions [17,3], got {arr.shape}"
+            )
+
+        batch_size, num_clips, num_frames, person_count = arr.shape[:4]
+        if batch_size < 1 or num_clips < 1 or num_frames < 1 or person_count < 1:
+            raise ValueError("Batch, clips, frames, and persons must be non-empty")
+        if person_count > self.max_persons:
+            raise ValueError(
+                f"Received {person_count} people, but max_persons={self.max_persons}"
+            )
+        if not np.isfinite(arr).all():
+            raise ValueError("Keypoints contain NaN or infinite values")
+        if np.any(arr[..., 2] < 0) or np.any(arr[..., 2] > 1):
+            raise ValueError("Confidence values must be in [0,1]")
         if person_ids is not None and len(person_ids) != person_count:
             raise ValueError(
                 f"person_ids must contain {person_count} IDs, got {len(person_ids)}"
             )
+
+        # Prepare every clip/person sequence. The frame dimension is metadata
+        # only; no image or video frame is passed to the recognizer.
+        packed = np.zeros(
+            (batch_size, num_clips, self.max_persons, 100, 17, 3),
+            dtype=np.float32,
+        )
+        for b in range(batch_size):
+            for clip in range(num_clips):
+                for person in range(person_count):
+                    packed[b, clip, person] = self._prepare_single_person(
+                        arr[b, clip, :, person],
+                        image_size=image_size,
+                    )
+
         tensor = torch.from_numpy(packed).to(self.device)
         self.eval()
+        outputs = []
         with torch.inference_mode():
-            person_logits = self._person_logits(tensor)[0, :person_count]
-            person_probabilities = torch.softmax(person_logits, dim=-1)
+            batch_logits = self._person_logits(tensor)
+            for b in range(batch_size):
+                person_logits = batch_logits[b, :person_count]
+                person_probabilities = torch.softmax(person_logits, dim=-1)
 
-            # Aggregate only real people; padded slots are excluded.
-            scene_logits = person_logits.mean(dim=0)
-            scene_probabilities = torch.softmax(scene_logits, dim=-1)
+                # Aggregate only real people; padded slots are excluded.
+                scene_logits = person_logits.mean(dim=0)
+                scene_probabilities = torch.softmax(scene_logits, dim=-1)
 
-            people = [
-                {
-                    "person_id": person_ids[index] if person_ids is not None else index + 1,
-                    "slot_index": index,
-                    **self._format_prediction(
-                        person_probabilities[index], self.class_names, topk
+                people = [
+                    {
+                        "person_id": person_ids[index] if person_ids is not None else index + 1,
+                        "slot_index": index,
+                        **self._format_prediction(
+                            person_probabilities[index], self.class_names, topk
+                        ),
+                    }
+                    for index in range(person_count)
+                ]
+                outputs.append({
+                    "num_persons": person_count,
+                    "max_persons": self.max_persons,
+                    "scene": self._format_prediction(
+                        scene_probabilities, self.class_names, topk
                     ),
-                }
-                for index in range(person_count)
-            ]
-            return {
-                "num_persons": person_count,
-                "max_persons": self.max_persons,
-                "scene": self._format_prediction(
-                    scene_probabilities, self.class_names, topk
-                ),
-                "persons": people,
-            }
+                    "persons": people,
+                })
+
+        return outputs[0] if batch_size == 1 else outputs
 
     def forward_logits(self, keypoint):
         return self._person_logits(keypoint).mean(dim=1)
