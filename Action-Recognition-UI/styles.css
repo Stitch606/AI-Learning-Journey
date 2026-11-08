@@ -91,3 +91,22 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
   .timeline svg { height: 100px; }
   .video-controls button { padding: 7px 5px; font-size: 9px; }
 }
+
+
+/* Explicit desktop grid placement keeps the settings rail beside the media stage */
+@media (min-width: 761px) {
+  .layout {
+    display: grid !important;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) 350px !important;
+    grid-template-rows: auto auto;
+    align-items: start;
+  }
+  .center { grid-column: 1; grid-row: 1; min-width: 0; }
+  .right { grid-column: 2; grid-row: 1; min-width: 0; }
+  .bottom-grid { grid-column: 1 / -1; grid-row: 2; }
+  .video-panel, .charts { width: 100%; }
+}
+@media (min-width: 1450px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 380px !important; }
+}
