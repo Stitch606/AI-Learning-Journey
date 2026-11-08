@@ -119,3 +119,72 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
 
 /* No activity is shown until the first real detection arrives. */
 .donut { background: conic-gradient(var(--border) 0 100%); }
+
+
+/* Desktop workspace width and chart collision fix.
+   Intentionally leaves the camera/video frame rules untouched. */
+@media (min-width: 761px) {
+  .main {
+    padding: 94px 20px 28px 18px;
+  }
+  .layout {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) minmax(290px, 320px) !important;
+    gap: 18px;
+  }
+  .center,
+  .right,
+  .charts,
+  .chart {
+    min-width: 0;
+  }
+  .chart {
+    overflow: hidden;
+  }
+  .distribution {
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .distribution ul {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .distribution li {
+    white-space: normal;
+  }
+  .timeline svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+  }
+}
+@media (min-width: 761px) and (max-width: 1199px) {
+  .main {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(270px, 290px) !important;
+    gap: 14px;
+  }
+  .charts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}
+@media (min-width: 1200px) {
+  .charts {
+    grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+    gap: 16px;
+  }
+}
+@media (min-width: 1450px) {
+  .main {
+    padding-left: 24px;
+    padding-right: 28px;
+  }
+  .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 350px) !important;
+    gap: 20px;
+  }
+}
