@@ -26,7 +26,7 @@
 <div class="layout">
 <section class="center">
 <section class="panel video-panel">
- <div class="camera-stage" id="videoFrame" aria-label="Camera preview">
+ <div class="video" id="videoFrame">
   <video id="cameraVideo" autoplay muted playsinline hidden></video>
   <div class="video-empty" id="videoEmpty">
    <div class="camera-glyph" aria-hidden="true">⌁</div>
@@ -51,7 +51,7 @@
 </div>
 </section>
 <aside class="right">
-<section class="panel settings"><h2>♧　Model &amp; Settings <span>⌃</span></h2><label>Action Model</label><select id="modelSelect"><option>YOLOv8 + Action Recognition</option><option>YOLO Pose + ST-GCN++</option><option>Custom Action Model</option></select><h3>Detection Options</h3><label class="switch">Detect People <input type="checkbox" checked data-setting="detectPeople"><i></i></label><label class="switch">Recognize Actions <input type="checkbox" checked data-setting="recognizeActions"><i></i></label><label class="switch">Show Confidence <input type="checkbox" checked data-setting="showConfidence"><i></i></label><label>Device</label><select id="deviceSelect"><option>CPU (Auto)</option><option>CUDA</option></select><div class="engine-status" id="engineStatus"><span class="engine-mark"><i></i></span><span class="engine-copy"><b>VISION SYSTEM</b><small id="engineStatusText">Awaiting camera input</small></span><span class="engine-indicator">STANDBY</span></div></section>
+<section class="panel settings"><h2>♧　Model &amp; Settings <span>⌃</span></h2><label>Action Model</label><select id="modelSelect"><option>YOLOv8 + Action Recognition</option><option>YOLO Pose + ST-GCN++</option><option>Custom Action Model</option></select><h3>Detection Options</h3><label class="switch">Detect People <input type="checkbox" checked data-setting="detectPeople"><i></i></label><label class="switch">Recognize Actions <input type="checkbox" checked data-setting="recognizeActions"><i></i></label><label class="switch">Show Confidence <input type="checkbox" checked data-setting="showConfidence"><i></i></label><label>Device</label><select id="deviceSelect"><option>CPU (Auto)</option><option>CUDA</option></select><div class="loaded">✓　Gradio Bridge Ready · Model Pending</div></section>
 <section class="panel stats"><h2>♧　Statistics</h2><div class="stat-grid"><div><b>♟　<span id="peopleCount">0</span></b><small>People Detected</small></div><div><b>⚡　<span id="actionCount">0</span></b><small>Actions Recognized</small></div><div><b>▣　<span id="statFps">0.0</span></b><small>FPS</small></div><div><b class="runtime-value">◷　<span id="runtimeValue">00:00:00</span></b><small>Runtime</small></div></div></section>
 </aside>
 <div class="bottom-grid">
