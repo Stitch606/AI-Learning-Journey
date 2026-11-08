@@ -76,6 +76,27 @@ jobs:
             page.on("pageerror", error => errors.push(error.message));
             await page.goto("http://127.0.0.1:7860/", { waitUntil: "networkidle" });
             if (await page.locator(".layout").count() !== 1) throw new Error("Dashboard did not render");
+            for (const width of [1024, 1280, 1440, 1920]) {
+              await page.setViewportSize({ width, height: 1000 });
+              const geometry = await page.evaluate(() => {
+                const rect = selector => {
+                  const r = document.querySelector(selector).getBoundingClientRect();
+                  return { x: r.x, right: r.right, width: r.width };
+                };
+                const video = rect(".video");
+                const rail = rect(".right");
+                const cards = [...document.querySelectorAll(".charts .chart")].map(el => ({
+                  width: el.clientWidth, scrollWidth: el.scrollWidth
+                }));
+                return { video, rail, cards, pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+              });
+              if (geometry.pageOverflow) throw new Error("Desktop horizontal overflow at " + width + "px");
+              if (width >= 1400 && (geometry.video.width <= geometry.rail.width || geometry.rail.width > 330))
+                throw new Error("Desktop video/side-rail proportions failed at " + width + "px: " + JSON.stringify(geometry));
+              if (geometry.cards.some(card => card.scrollWidth > card.width + 2))
+                throw new Error("Analysis cards overflow at " + width + "px: " + JSON.stringify(geometry.cards));
+            }
+            await page.setViewportSize({ width: 1440, height: 1170 });
             await page.screenshot({ path: "artifacts/hf-desktop-dark.png", fullPage: true });
             await page.locator("#themeToggle").click();
             if (await page.locator("html").getAttribute("data-theme") !== "light") throw new Error("Light theme failed");
