@@ -265,3 +265,19 @@ body { position: relative; }
   max-width: 100%;
 }
 .table-wrap { max-width: 100%; }
+
+
+/* Rotate portrait-oriented camera feeds to match the landscape preview frame. */
+#cameraVideo.portrait-source {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  transform: translate(-50%, -50%) rotate(90deg) !important;
+}
