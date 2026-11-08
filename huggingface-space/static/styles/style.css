@@ -267,17 +267,29 @@ body { position: relative; }
 .table-wrap { max-width: 100%; }
 
 
-/* Rotate portrait-oriented camera feeds to match the landscape preview frame. */
-#cameraVideo.portrait-source {
-  position: absolute !important;
-  top: 50% !important;
-  left: 50% !important;
-  right: auto !important;
-  bottom: auto !important;
-  width: auto !important;
-  height: auto !important;
-  max-width: none !important;
-  max-height: none !important;
-  object-fit: contain !important;
-  transform: translate(-50%, -50%) rotate(-90deg) !important;
+
+
+/* Keep the camera preview frame itself landscape on phones; never rotate the feed. */
+@media (max-width: 760px) {
+  #videoFrame.video {
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    aspect-ratio: 16 / 9 !important;
+    overflow: hidden !important;
+  }
+  #cameraVideo {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    transform: none !important;
+  }
 }
+#cameraVideo.portrait-source { transform: none !important; }
