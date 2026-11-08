@@ -29,7 +29,7 @@ jobs:
           name: stgcnpp-ntu60-xsub-finetuned
           repository: Stitch606/AI-Learning-Journey
           run-id: 42398335982
-          github-token: \${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: previous-artifact
 
       - name: Verify resume checkpoint exists
