@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import gradio as gr
+import numpy as np
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -15,8 +16,10 @@ def process_frame(frame: Image.Image) -> dict:
     """
     MODEL INTEGRATION POINT.
 
-    Replace this placeholder with your YOLO Pose -> keypoints -> ST-GCN++ call.
-    Keep the return format compatible with ActionUI.setState():
+    Gradio supplies each uploaded frame as a PIL Image. Convert it once to an
+    RGB NumPy array here, then pass frame_np to YOLO Pose -> keypoints -> ST-GCN++.
+
+    Expected model result format:
       {
         "people": [
           {"id": 1, "person": "Person 1", "action": "Walking",
@@ -25,14 +28,18 @@ def process_frame(frame: Image.Image) -> dict:
         "fps": 12.5,
         "logs": [{"text": "Person 1: Walking (0.93)"}]
       }
-    The incoming frame is an RGB PIL image.
     """
+    frame_np = np.asarray(frame.convert("RGB"), dtype=np.uint8)
+
+    # Replace this pending result with the YOLO Pose -> ST-GCN++ pipeline.
     return {
         "people": [],
         "fps": 0.0,
         "logs": [],
         "model_connected": False,
-        "message": "Frame received by Gradio. Connect your model in process_frame().",
+        "message": "Frame received and converted to NumPy. Model pending.",
+        "frame_shape": list(frame_np.shape),
+        "frame_dtype": str(frame_np.dtype),
     }
 
 
@@ -40,11 +47,12 @@ def receive_frame(frame: Image.Image) -> dict:
     if frame is None:
         return {"status": "error", "message": "No frame received."}
 
-    result = process_frame(frame.convert("RGB"))
+    rgb_frame = frame.convert("RGB")
+    result = process_frame(rgb_frame)
     return {
         "status": "ok",
-        "width": frame.width,
-        "height": frame.height,
+        "width": rgb_frame.width,
+        "height": rgb_frame.height,
         "received_at": datetime.now(timezone.utc).isoformat(),
         **result,
     }
