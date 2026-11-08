@@ -119,3 +119,27 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
 
 /* No activity is shown until the first real detection arrives. */
 .donut { background: conic-gradient(var(--border) 0 100%); }
+
+
+/* Desktop-only: widen the video workspace and make both analysis cards fit their content. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .main { padding-left: 12px; padding-right: 12px; }
+  .layout { grid-template-columns: minmax(0, 1fr) 255px !important; gap: 12px; }
+  .video { aspect-ratio: 16 / 9; }
+  .charts { grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 10px; }
+  .chart { padding: 11px 9px 9px; }
+  .distribution { gap: 6px; justify-content: center; min-height: 150px; }
+  .donut { width: 104px; height: 104px; flex: 0 0 104px; }
+  .donut > div { width: 70px; height: 70px; margin: 17px; }
+  .distribution ul { min-width: 0; font-size: 10px; }
+  .distribution li { gap: 5px; margin: 8px 0; white-space: normal; }
+  .timeline h2 { flex-wrap: wrap; gap: 5px; }
+  .timeline h2 small { white-space: nowrap; }
+  .timeline svg { height: 155px; }
+}
+@media (min-width: 1101px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 300px !important; gap: 16px; }
+  .main { padding-left: 20px; padding-right: 20px; }
+  .video { aspect-ratio: 16 / 9; }
+  .charts { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 14px; }
+}
