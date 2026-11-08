@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   fine-tune:
@@ -21,6 +22,21 @@ jobs:
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
+
+      - name: Download the saved epoch-2 fine-tuned weights
+        uses: actions/download-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-finetuned
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 42398335982
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          path: previous-artifact
+
+      - name: Verify resume checkpoint exists
+        run: |
+          set -euo pipefail
+          test -s previous-artifact/finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+          ls -lh previous-artifact/finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -45,19 +61,22 @@ jobs:
           test "$(stat -c%s data/nturgbd/ntu60_hrnet.pkl)" -gt 1000000
           ls -lh data/nturgbd/ntu60_hrnet.pkl
 
-      - name: Fine-tune all ST-GCN++ parameters on xsub_train
+      - name: Continue fine-tuning from epoch 2 through epoch 4
+        env:
+          RESUME_CHECKPOINT: previous-artifact/finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
         run: |
           set -euo pipefail
           python GCN/STGCNPP/finetune_ntu60.py
 
-      - name: Upload fine-tuned checkpoint and validation report
+      - name: Upload best checkpoint, resumable state, and validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stgcnpp-ntu60-xsub-finetuned
+          name: stgcnpp-ntu60-xsub-finetuned-resumed
           path: |
             GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet.pth
             finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+            finetune_outputs/stgcnpp_jm_ntu60_xsub_resume_state.pth
             finetune_outputs/finetune_report.json
           if-no-files-found: warn
           retention-days: 30

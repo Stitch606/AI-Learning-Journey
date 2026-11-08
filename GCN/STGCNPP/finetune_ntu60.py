@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import copy
 import json
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -18,20 +18,19 @@ from GCN.STGCNPP.model_multi_person import STGCNPPMultiPerson
 from GCN.STGCNPP.evaluate_ntu60_per_person import (
     DATA_PATH,
     NUM_PERSONS,
-    CLIP_LEN,
     preprocess_annotation,
 )
 
 CHECKPOINT = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
 OUTPUT_DIR = ROOT / "finetune_outputs"
 OUTPUT_CHECKPOINT = OUTPUT_DIR / "stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth"
+RESUME_STATE = OUTPUT_DIR / "stgcnpp_jm_ntu60_xsub_resume_state.pth"
 REPORT_PATH = OUTPUT_DIR / "finetune_report.json"
 
 BATCH_SIZE = 16
-EPOCHS = 4
+TOTAL_EPOCHS = 4
 LEARNING_RATE = 1e-5
 WEIGHT_DECAY = 1e-4
-PERSON_LOSS_WEIGHT = 1.0
 SEED = 255
 
 
@@ -72,15 +71,15 @@ def evaluate(model, loader, device):
         labels = labels.to(device)
 
         logits = model._person_logits(inputs)[:, :, 0, :]
-        person_pred = logits.argmax(dim=-1)
+        predictions = logits.argmax(dim=-1)
         if valid.any():
-            expanded_labels = labels[:, None].expand_as(person_pred)
+            expanded_labels = labels[:, None].expand_as(predictions)
             person_logits = logits[valid]
             person_targets = expanded_labels[valid]
             person_loss = F.cross_entropy(person_logits, person_targets)
             loss_sum += float(person_loss.item())
             batches += 1
-            person_correct += int((person_pred[valid] == person_targets).sum().item())
+            person_correct += int((predictions[valid] == person_targets).sum().item())
             person_total += int(valid.sum().item())
 
     return {
@@ -90,12 +89,49 @@ def evaluate(model, loader, device):
     }
 
 
+def cpu_state_dict(model):
+    return {
+        key: value.detach().cpu().clone()
+        for key, value in model.state_dict().items()
+    }
+
+
+def save_best_checkpoint(model, epoch, validation, best_metric, resume_source):
+    torch.save(
+        {
+            "state_dict": cpu_state_dict(model),
+            "fine_tuned": epoch > 0,
+            "base_checkpoint": CHECKPOINT.name,
+            "epoch": epoch,
+            "validation": validation,
+            "best_validation_accuracy": best_metric,
+            "resume_source": resume_source,
+            "training": {
+                "dataset": "PYSKL NTU60 HRNet annotations",
+                "train_split": "xsub_train",
+                "validation_split": "xsub_val",
+                "learning_rate": LEARNING_RATE,
+                "weight_decay": WEIGHT_DECAY,
+                "batch_size": BATCH_SIZE,
+                "total_epochs": TOTAL_EPOCHS,
+                "person_loss_only": True,
+            },
+        },
+        OUTPUT_CHECKPOINT,
+    )
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if not DATA_PATH.is_file():
         raise FileNotFoundError(f"Missing official NTU60 HRNet annotations: {DATA_PATH}")
     if not CHECKPOINT.is_file():
         raise FileNotFoundError(f"Missing original pretrained checkpoint: {CHECKPOINT}")
+
+    resume_path_value = os.environ.get("RESUME_CHECKPOINT", "").strip()
+    resume_path = Path(resume_path_value) if resume_path_value else None
+    if resume_path is not None and not resume_path.is_file():
+        raise FileNotFoundError(f"Requested resume checkpoint does not exist: {resume_path}")
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
@@ -157,11 +193,10 @@ def main():
         strict=True,
         max_persons=NUM_PERSONS,
     )
-    model.train()
 
     print("Evaluating original checkpoint before fine-tuning...", flush=True)
-    baseline = evaluate(model, val_loader, device)
-    print("BASELINE=" + json.dumps(baseline), flush=True)
+    original_baseline = evaluate(model, val_loader, device)
+    print("ORIGINAL_BASELINE=" + json.dumps(original_baseline), flush=True)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -172,26 +207,46 @@ def main():
         optimizer, mode="max", factor=0.5, patience=1, min_lr=1e-7
     )
 
-    best_metric = baseline["per_person_top1_accuracy"]
-    best_state = {
-        key: value.detach().cpu().clone()
-        for key, value in model.state_dict().items()
-    }
-    # Always publish a usable checkpoint, even if fine-tuning does not beat
-    # the starting validation score during the allotted run.
-    torch.save(
-        {
-            "state_dict": best_state,
-            "fine_tuned": False,
-            "base_checkpoint": CHECKPOINT.name,
-            "epoch": 0,
-            "validation": baseline,
-        },
-        OUTPUT_CHECKPOINT,
-    )
-    history = []
+    start_epoch = 0
+    resume_source = "original pretrained checkpoint"
+    if resume_path is not None:
+        resumed = torch.load(resume_path, map_location="cpu", weights_only=False)
+        resumed_weights = resumed.get("state_dict", resumed)
+        model.load_state_dict(resumed_weights, strict=True)
+        start_epoch = int(resumed.get("epoch", 0))
+        resume_source = str(resume_path)
+        if start_epoch >= TOTAL_EPOCHS:
+            raise RuntimeError(
+                f"Checkpoint is already at epoch {start_epoch}; total target is {TOTAL_EPOCHS}"
+            )
+        if "optimizer_state_dict" in resumed:
+            optimizer.load_state_dict(resumed["optimizer_state_dict"])
+            print("Optimizer state restored from resume checkpoint.", flush=True)
+        else:
+            print(
+                "Resume weights restored; previous artifact has no optimizer state, "
+                "so AdamW starts fresh at the configured learning rate.",
+                flush=True,
+            )
+        if "scheduler_state_dict" in resumed:
+            scheduler.load_state_dict(resumed["scheduler_state_dict"])
+        print(
+            f"RESUMED_FROM={resume_path} completed_epoch={start_epoch}",
+            flush=True,
+        )
 
-    for epoch in range(1, EPOCHS + 1):
+    starting_validation = evaluate(model, val_loader, device)
+    print("RESUME_START_VALIDATION=" + json.dumps(starting_validation), flush=True)
+
+    best_metric = starting_validation["per_person_top1_accuracy"]
+    best_epoch = start_epoch
+    best_validation = starting_validation
+    save_best_checkpoint(
+        model, best_epoch, best_validation, best_metric, resume_source
+    )
+
+    history = []
+    for epoch in range(start_epoch + 1, TOTAL_EPOCHS + 1):
         model.train()
         running_loss = 0.0
         batches = 0
@@ -225,7 +280,7 @@ def main():
 
             if step % 250 == 0:
                 print(
-                    f"epoch={epoch}/{EPOCHS} step={step}/{len(train_loader)} "
+                    f"epoch={epoch}/{TOTAL_EPOCHS} step={step}/{len(train_loader)} "
                     f"loss={running_loss / batches:.5f} "
                     f"lr={optimizer.param_groups[0]['lr']:.2e}",
                     flush=True,
@@ -247,40 +302,33 @@ def main():
         metric = validation["per_person_top1_accuracy"]
         if metric > best_metric:
             best_metric = metric
-            best_state = {
-                key: value.detach().cpu().clone()
-                for key, value in model.state_dict().items()
-            }
-            torch.save(
-                {
-                    "state_dict": best_state,
-                    "fine_tuned": True,
-                    "base_checkpoint": CHECKPOINT.name,
-                    "epoch": epoch,
-                    "validation": validation,
-                    "training": {
-                        "dataset": "PYSKL NTU60 HRNet annotations",
-                        "train_split": "xsub_train",
-                        "validation_split": "xsub_val",
-                        "learning_rate": LEARNING_RATE,
-                        "weight_decay": WEIGHT_DECAY,
-                        "batch_size": BATCH_SIZE,
-                        "epochs_requested": EPOCHS,
-                        "person_loss_weight": PERSON_LOSS_WEIGHT,
-                    },
-                },
-                OUTPUT_CHECKPOINT,
+            best_epoch = epoch
+            best_validation = validation
+            save_best_checkpoint(
+                model, best_epoch, best_validation, best_metric, resume_source
             )
             print(f"BEST_CHECKPOINT_SAVED={OUTPUT_CHECKPOINT}", flush=True)
 
-    final_model = STGCNPPMultiPerson(
-        checkpoint_path=None,
-        num_classes=60,
-        device=str(device),
-        max_persons=NUM_PERSONS,
-    )
-    final_model.load_state_dict(best_state, strict=True)
-    best_validation = evaluate(final_model, val_loader, device)
+        # Save the latest epoch separately with optimizer and scheduler state.
+        # This makes any later continuation an actual training resume.
+        torch.save(
+            {
+                "state_dict": cpu_state_dict(model),
+                "epoch": epoch,
+                "validation": validation,
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "resume_source": resume_source,
+                "training": {
+                    "learning_rate": LEARNING_RATE,
+                    "weight_decay": WEIGHT_DECAY,
+                    "batch_size": BATCH_SIZE,
+                    "total_epochs": TOTAL_EPOCHS,
+                },
+            },
+            RESUME_STATE,
+        )
+        print(f"RESUME_STATE_SAVED={RESUME_STATE}", flush=True)
 
     report = {
         "dataset": "PYSKL NTU60 HRNet annotations",
@@ -289,31 +337,36 @@ def main():
         "validation_split": "xsub_val",
         "train_samples": len(train_annotations),
         "validation_samples": len(val_annotations),
-        "baseline": baseline,
+        "original_checkpoint_baseline": original_baseline,
+        "resume_start_validation": starting_validation,
         "best_validation": best_validation,
-        "per_person_absolute_gain": (
+        "best_epoch": best_epoch,
+        "per_person_gain_vs_original": (
             best_validation["per_person_top1_accuracy"]
-            - baseline["per_person_top1_accuracy"]
+            - original_baseline["per_person_top1_accuracy"]
         ),
         "training": {
-            "epochs_requested": EPOCHS,
+            "completed_epochs_this_run": history,
+            "total_target_epochs": TOTAL_EPOCHS,
+            "resumed_from_epoch": start_epoch,
             "learning_rate": LEARNING_RATE,
             "weight_decay": WEIGHT_DECAY,
             "batch_size": BATCH_SIZE,
-            "person_loss_weight": PERSON_LOSS_WEIGHT,
-            "all_backbone_and_classifier_parameters_trainable": True,
-            "person_supervision_note": (
-                "The NTU60 annotation provides a clip-level action label. "
-                "That label is applied to each visible person track as weak "
-                "per-person supervision, alongside the scene-level objective."
+            "all_model_parameters_trainable": True,
+            "objective": (
+                "Cross-entropy over each valid person's independent logits. "
+                "No person-logit averaging and no scene-level loss or metrics."
+            ),
+            "supervision_note": (
+                "NTU60 supplies a clip-level action label; the same label is "
+                "applied to each valid person in that annotated clip."
             ),
         },
-        "history": history,
-        "checkpoint": str(OUTPUT_CHECKPOINT),
+        "best_checkpoint": str(OUTPUT_CHECKPOINT),
+        "latest_resume_state": str(RESUME_STATE),
     }
     REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print("FINAL_REPORT=" + json.dumps(report), flush=True)
-    print(f"CHECKPOINT_PATH={OUTPUT_CHECKPOINT}", flush=True)
 
 
 if __name__ == "__main__":
