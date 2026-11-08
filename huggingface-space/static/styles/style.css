@@ -110,3 +110,9 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
 @media (min-width: 1450px) {
   .layout { grid-template-columns: minmax(0, 1fr) 380px !important; }
 }
+
+/* Keep runtime inside its statistics tile. */
+.stat-grid > div { min-width: 0; overflow: hidden; }
+.stat-grid .runtime-value { white-space: nowrap; font-size: clamp(11px, 1.05vw, 16px); letter-spacing: -0.35px; }
+.stat-grid .runtime-value span { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .stat-grid .runtime-value { font-size: clamp(9px, 2.5vw, 13px); letter-spacing: -0.5px; } }
