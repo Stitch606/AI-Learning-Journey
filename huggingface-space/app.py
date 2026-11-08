@@ -54,13 +54,30 @@ def process_frame(frame: Image.Image) -> dict:
     }
 
 
+def load_frame(frame: dict | Image.Image) -> Image.Image:
+    """
+    Gradio Server API receives uploaded files as FileData dictionaries.
+    Resolve the temporary file path and open it as a PIL image.
+    """
+    if isinstance(frame, Image.Image):
+        return frame.convert("RGB")
+
+    if isinstance(frame, dict):
+        frame_path = frame.get("path")
+        if frame_path:
+            with Image.open(frame_path) as image:
+                return image.convert("RGB")
+
+    raise ValueError("The Gradio frame payload did not contain a readable image path.")
+
+
 @app.api(name="receive_frame", description="Receive one camera or video frame for action analysis.")
 @gpu
-def receive_frame(frame: Image.Image) -> dict:
+def receive_frame(frame: dict) -> dict:
     if frame is None:
         return {"status": "error", "message": "No frame received."}
 
-    rgb_frame = frame.convert("RGB")
+    rgb_frame = load_frame(frame)
     result = process_frame(rgb_frame)
     return {
         "status": "ok",
