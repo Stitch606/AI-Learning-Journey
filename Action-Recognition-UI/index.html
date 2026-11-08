@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#081426"><title>Human Action Detection</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand-icon" aria-hidden="true">♧</div>
+  <div class="brand"><h1>Human Action Detection</h1><p>Real-time AI Analysis &amp; Recognition</p></div>
+  <div class="top-spacer"></div><div class="online"><i></i>System Online</div><time id="clock">14:32:18</time>
+  <button class="icon-btn" id="themeToggle" aria-label="Toggle theme">☼</button><button class="icon-btn gear" aria-label="Settings">⚙</button>
+  <button class="icon-btn mobile-menu" id="mobileMenu" aria-label="Open menu">☰</button>
+</header>
+<aside class="sidebar" id="sidebar">
+<nav>
+<button class="nav active" data-nav="Live Detection"><span>▣</span>Live Detection</button>
+<button class="nav" data-nav="Video Analysis"><span>⏵</span>Video Analysis</button>
+<button class="nav" data-nav="Results"><span>▤</span>Results</button>
+<button class="nav" data-nav="Settings"><span>⚙</span>Settings</button>
+<button class="nav" data-nav="About"><span>ⓘ</span>About</button>
+</nav>
+</aside>
+<main class="main">
+<div class="layout">
+<section class="center">
+<section class="panel video-panel">
+ <div class="video" id="videoFrame">
+  <img id="previewImage" src="../Portfolio/Human-Action-Detection/src/assets/campus_scene.svg" alt="Example live detection scene">
+  <video id="cameraVideo" autoplay muted playsinline hidden></video>
+  <div class="live"><i></i>LIVE</div><div class="fps">FPS: <b id="fpsValue">24.7</b></div>
+  <div class="person p1"><b>Person 1</b><span>Walking 0.94</span></div><div class="person p2"><b>Person 2</b><span>Walking 0.89</span></div><div class="person p3"><b>Person 3</b><span>Running 0.92</span></div><div class="person p4"><b>Person 4</b><span>Standing 0.76</span></div>
+  <div class="empty" id="empty" hidden>Camera is not active<br><small>Start the camera or choose a video file</small></div>
+ </div>
+ <div class="video-controls">
+  <div><button class="primary" id="stopBtn">■　Stop</button><button id="pauseBtn">Ⅱ　Pause</button><button id="cameraBtn">▣　Switch Camera</button><input type="file" id="videoUpload" accept="video/*" hidden></div><button id="fullscreenBtn" class="square">⛶</button>
+ </div>
+</section>
+<div class="charts">
+<section class="panel chart"><h2>Action Distribution</h2><div class="distribution"><div class="donut"><div><b id="totalActions">5</b><span>Total Actions</span></div></div><ul><li><i class="cyan"></i>Walking <b>60%</b></li><li><i class="blue"></i>Running <b>20%</b></li><li><i class="coral"></i>Standing <b>10%</b></li><li><i class="purple"></i>Sitting <b>5%</b></li><li><i class="green"></i>Falling <b>5%</b></li></ul></div></section>
+<section class="panel chart timeline"><h2>People &amp; Actions Over Time <small><i class="blue"></i> People　<i class="green"></i> Actions</small></h2><svg viewBox="0 0 440 205" role="img" aria-label="People and actions over time"><g class="gridlines"><path d="M34 16H430M34 53H430M34 90H430M34 127H430M34 164H430M34 16V164M100 16V164M166 16V164M232 16V164M298 16V164M364 16V164M430 16V164"/></g><g class="axis"><text x="10" y="20">10</text><text x="16" y="57">8</text><text x="16" y="94">6</text><text x="16" y="131">4</text><text x="16" y="168">0</text><text x="34" y="188">0s</text><text x="96" y="188">10s</text><text x="162" y="188">20s</text><text x="228" y="188">30s</text><text x="294" y="188">40s</text><text x="360" y="188">50s</text><text x="412" y="188">60s</text></g><path class="blue-line" d="M34 128 48 111 62 121 76 100 90 109 104 89 118 104 132 80 146 92 160 70 174 99 188 83 202 101 216 90 230 99 244 85 258 94 272 81 286 97 300 87 314 103 328 82 342 93 356 73 370 88 384 97 398 108 412 100 430 91"/><path class="green-line" d="M34 148 48 137 62 143 76 133 90 140 104 128 118 136 132 123 146 134 160 119 174 140 188 132 202 142 216 136 230 142 244 132 258 139 272 129 286 141 300 135 314 145 328 131 342 138 356 125 370 135 384 141 398 146 412 138 430 133"/></svg></section>
+</div>
+</section>
+<aside class="right">
+<section class="panel settings"><h2>♧　Model &amp; Settings <span>⌃</span></h2><label>Action Model</label><select id="modelSelect"><option>YOLOv8 + Action Recognition</option><option>YOLO Pose + ST-GCN++</option><option>Custom Action Model</option></select><h3>Detection Options</h3><label class="switch">Detect People <input type="checkbox" checked data-setting="detectPeople"><i></i></label><label class="switch">Recognize Actions <input type="checkbox" checked data-setting="recognizeActions"><i></i></label><label class="switch">Show Confidence <input type="checkbox" checked data-setting="showConfidence"><i></i></label><label>Device</label><select id="deviceSelect"><option>CPU (Auto)</option><option>CUDA</option></select><div class="loaded">✓　Model Loaded</div></section>
+<section class="panel stats"><h2>♧　Statistics</h2><div class="stat-grid"><div><b>♟　<span id="peopleCount">4</span></b><small>People Detected</small></div><div><b>⚡　<span id="actionCount">5</span></b><small>Actions Recognized</small></div><div><b>▣　<span id="statFps">24.7</span></b><small>FPS</small></div><div><b>◷　00:01:32</b><small>Runtime</small></div></div></section>
+</aside>
+<section class="panel log"><h2>Real-time Log <button id="clearLog">Clear</button></h2><div id="logList"><p><i class="red"></i>14:32:12　Person 3 detected - Running (0.92)</p><p><i class="blue"></i>14:32:10　Person 2 detected - Walking (0.89)</p><p><i class="green"></i>14:32:08　Person 1 detected - Walking (0.94)</p><p><i class="purple"></i>14:32:05　Person 4 detected - Standing (0.76)</p><p><i class="green"></i>14:32:02　Frame processed - 24.7 FPS</p></div></section>
+<section class="panel results"><h2>♧　Detection Results <button id="viewAll">View All</button></h2><div class="table-wrap"><table><thead><tr><th>ID</th><th>Person</th><th>Action</th><th>Confidence</th><th>Time</th></tr></thead><tbody id="resultsBody"><tr><td>1</td><td>🟢 Person 1</td><td>Walking</td><td>0.94</td><td>14:32:12</td></tr><tr><td>2</td><td>🔵 Person 2</td><td>Walking</td><td>0.89</td><td>14:32:10</td></tr><tr><td>3</td><td>🔴 Person 3</td><td>Running</td><td>0.92</td><td>14:32:08</td></tr><tr><td>4</td><td>🟣 Person 4</td><td>Standing</td><td>0.76</td><td>14:32:05</td></tr></tbody></table></div></section>
+</div>
+</main>
+<script src="app.js"></script>
+</body></html>

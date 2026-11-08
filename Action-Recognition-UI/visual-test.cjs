@@ -1,0 +1,22 @@
+const { chromium } = require("playwright");
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ const page=await browser.newPage({viewport:{width:1280,height:1170},deviceScaleFactor:1});
+ const errors=[];page.on("pageerror",e=>errors.push(e.message));
+ await page.goto("http://127.0.0.1:4173/Action-Recognition-UI/",{waitUntil:"networkidle"});
+ await page.screenshot({path:"artifacts/desktop-dark.png",fullPage:true});
+ if(await page.locator(".layout").count()!==1)throw Error("Dashboard layout missing");
+ await page.locator("#themeToggle").click();
+ if(await page.locator("html").getAttribute("data-theme")!=="light")throw Error("Light theme did not activate");
+ await page.screenshot({path:"artifacts/desktop-light.png",fullPage:true});
+ await page.evaluate(()=>window.ActionUI.setState({fps:31.4,people:[{id:1,person:"Person 1",action:"Walking",confidence:.97}]}));
+ if(await page.locator("#peopleCount").innerText()!=="1")throw Error("State bridge failed to update people count");
+ const mobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true});
+ await mobile.goto("http://127.0.0.1:4173/Action-Recognition-UI/",{waitUntil:"networkidle"});
+ await mobile.screenshot({path:"artifacts/mobile-dark.png",fullPage:true});
+ const overflow=await mobile.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth);
+ if(overflow)throw Error("Mobile horizontal overflow detected");
+ if(errors.length)throw Error(errors.join("\n"));
+ await browser.close();
+ console.log("Visual smoke tests passed: desktop, themes, state bridge, mobile layout.");
+})().catch(e=>{console.error(e);process.exit(1)});

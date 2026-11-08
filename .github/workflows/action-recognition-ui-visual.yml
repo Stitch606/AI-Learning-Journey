@@ -1,0 +1,41 @@
+name: Action Recognition UI Visual QA
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "Action-Recognition-UI/**"
+      - ".github/workflows/action-recognition-ui-visual.yml"
+permissions:
+  contents: read
+  actions: read
+jobs:
+  visual-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 >/tmp/ui-server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:4173/Action-Recognition-UI/ >/dev/null && break; sleep 1; done
+      - name: Capture and test UI
+        run: |
+          mkdir -p artifacts
+          node Action-Recognition-UI/visual-test.cjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: action-recognition-ui-previews
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
