@@ -119,3 +119,77 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
 
 /* No activity is shown until the first real detection arrives. */
 .donut { background: conic-gradient(var(--border) 0 100%); }
+
+
+/* Desktop workspace: give the video canvas priority and prevent analysis-card collisions. */
+@media (min-width: 761px) {
+  .sidebar { width: 180px; }
+  .main { margin-left: 180px; padding: 94px 18px 28px; }
+  .layout {
+    display: grid !important;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .center, .right { min-width: 0; }
+  .center { grid-column: 1; }
+  .right {
+    grid-column: 1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 16px;
+  }
+  .charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .chart, .distribution, .timeline { min-width: 0; }
+  .distribution { justify-content: space-evenly; gap: 8px; }
+  .distribution ul { min-width: 0; }
+  .bottom-grid { grid-column: 1; }
+  .video { aspect-ratio: 16 / 9; }
+}
+
+@media (min-width: 1101px) and (max-width: 1399px) {
+  .charts { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+  .right { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1400px) {
+  .main { padding-left: 22px; padding-right: 22px; }
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    column-gap: 18px;
+    row-gap: 16px;
+  }
+  .center { grid-column: 1; grid-row: 1; }
+  .right {
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .charts { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 14px; }
+  .distribution { gap: 7px; }
+  .donut { width: 132px; height: 132px; flex-basis: 132px; }
+  .donut > div { width: 88px; height: 88px; margin: 22px; }
+  .bottom-grid { grid-column: 1 / -1; grid-row: 2; }
+}
+
+@media (min-width: 1700px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 320px; column-gap: 22px; }
+  .main { padding-left: 28px; padding-right: 28px; }
+  .charts { gap: 18px; }
+}
+
+@media (min-width: 761px) and (max-width: 1100px) {
+  .charts { grid-template-columns: minmax(0, 1fr); }
+  .right { gap: 12px; }
+  .distribution { justify-content: flex-start; }
+}
+
+@media (max-width: 760px) {
+  .sidebar { width: 200px; }
+  .main { margin-left: 0; }
+}
