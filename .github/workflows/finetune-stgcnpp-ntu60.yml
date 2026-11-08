@@ -61,7 +61,7 @@ jobs:
           test "$(stat -c%s data/nturgbd/ntu60_hrnet.pkl)" -gt 1000000
           ls -lh data/nturgbd/ntu60_hrnet.pkl
 
-      - name: Continue fine-tuning from epoch 2 through epoch 4
+      - name: Resume saved epoch-2 checkpoint and complete epochs 3-4
         env:
           RESUME_CHECKPOINT: previous-artifact/finetune_outputs/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
         run: |
