@@ -15,7 +15,7 @@
 </header>
 <aside class="sidebar" id="sidebar">
 <nav>
-<button class="nav active" data-nav="Live Detection"><span>▣</span>Live Detection</button>
+<button class="nav active" data-nav="Dashboard"><span>▣</span>Dashboard</button>
 <button class="nav" data-nav="Video Analysis"><span>⏵</span>Video Analysis</button>
 <button class="nav" data-nav="Results"><span>▤</span>Results</button>
 <button class="nav" data-nav="Settings"><span>⚙</span>Settings</button>
@@ -27,11 +27,20 @@
 <section class="center">
 <section class="panel video-panel">
  <div class="video" id="videoFrame">
-  <img id="previewImage" src="../Portfolio/Human-Action-Detection/src/assets/campus_scene.svg" alt="Example live detection scene">
   <video id="cameraVideo" autoplay muted playsinline hidden></video>
-  <div class="live"><i></i>LIVE</div><div class="fps">FPS: <b id="fpsValue">24.7</b></div>
-  <div class="person p1"><b>Person 1</b><span>Walking 0.94</span></div><div class="person p2"><b>Person 2</b><span>Walking 0.89</span></div><div class="person p3"><b>Person 3</b><span>Running 0.92</span></div><div class="person p4"><b>Person 4</b><span>Standing 0.76</span></div>
-  <div class="empty" id="empty" hidden>Camera is not active<br><small>Start the camera or choose a video file</small></div>
+  <div class="video-empty" id="videoEmpty">
+   <div class="camera-glyph" aria-hidden="true">⌁</div>
+   <p class="eyebrow" id="videoEyebrow">LIVE DETECTION</p>
+   <h2 id="videoTitle">Ready to monitor</h2>
+   <p class="video-help" id="videoHelp">Start your camera to begin real-time action recognition.</p>
+   <div class="empty-actions">
+    <button class="primary" id="openCameraBtn">◎　Open Camera</button>
+    <button id="chooseVideoBtn" hidden>↑　Upload Video</button>
+   </div>
+   <span class="privacy-note">Camera access starts only when you press the button</span>
+  </div>
+  <div class="live" id="liveBadge" hidden><i></i>LIVE</div><div class="fps" id="fpsBadge" hidden>FPS: <b id="fpsValue">0.0</b></div>
+ </div>
  </div>
  <div class="video-controls">
   <div><button class="primary" id="stopBtn">■　Stop</button><button id="pauseBtn">Ⅱ　Pause</button><button id="cameraBtn">▣　Switch Camera</button><input type="file" id="videoUpload" accept="video/*" hidden></div><button id="fullscreenBtn" class="square">⛶</button>
