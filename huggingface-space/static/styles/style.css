@@ -338,8 +338,11 @@ body { position: relative; }
 }
 @media (max-width: 760px) {
   .camera-stage {
-    width: 100%;
+    width: 100vw;
+    max-width: 100vw;
+    margin-left: -14px;
     aspect-ratio: 16 / 9;
     height: auto;
+    border-radius: 0;
   }
 }
