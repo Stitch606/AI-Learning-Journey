@@ -246,3 +246,22 @@ html[data-theme=light] .engine-indicator { color:#087df2;background:#087df20d;bo
   .engine-status { margin-top:8px;min-height:58px;padding:10px 11px; }
   .engine-mark { width:30px;height:30px;flex-basis:30px; }
 }
+
+/* Prevent any child panel or media element from creating horizontal page scroll. */
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
+body { position: relative; }
+.main, .layout, .center, .right, .video-panel, .video, .charts, .bottom-grid,
+.panel, .chart, .settings, .stats, .log, .results {
+  min-width: 0;
+  max-width: 100%;
+}
+.layout { width: 100%; }
+.video, #videoFrame { width: 100%; }
+.video > video, .video > img, #cameraVideo {
+  max-width: 100%;
+}
+.table-wrap { max-width: 100%; }
