@@ -116,3 +116,6 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
 .stat-grid .runtime-value { white-space: nowrap; font-size: clamp(11px, 1.05vw, 16px); letter-spacing: -0.35px; }
 .stat-grid .runtime-value span { font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .stat-grid .runtime-value { font-size: clamp(9px, 2.5vw, 13px); letter-spacing: -0.5px; } }
+
+/* No activity is shown until the first real detection arrives. */
+.donut { background: conic-gradient(var(--border) 0 100%); }
