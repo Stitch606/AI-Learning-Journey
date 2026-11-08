@@ -143,3 +143,34 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
   .video { aspect-ratio: 16 / 9; }
   .charts { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 14px; }
 }
+
+
+/* Stabilize desktop camera stage: the live video must not participate in
+   intrinsic-height calculation of the responsive media container. */
+@media (min-width: 761px) {
+  .video {
+    position: relative;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    overflow-anchor: none;
+    contain: layout paint;
+  }
+  #cameraVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+html, body, .main, .layout, .center, .right, .video-panel, .charts, .bottom-grid {
+  overflow-anchor: none;
+}
+#clock {
+  display: inline-block;
+  width: 8ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
