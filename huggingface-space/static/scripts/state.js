@@ -1,0 +1,2 @@
+export const state={page:"Dashboard",theme:localStorage.getItem("had-theme")||"dark",running:false,paused:false,cameraStream:null,cameraFacing:"environment",videoUrl:null,settings:{detectPeople:true,recognizeActions:true,showConfidence:true},people:[],bridge:null,bridgeBusy:false,bridgeTimer:null,bridgeConnected:false,lastFrameAt:0};
+export const setTheme=t=>{state.theme=t;document.documentElement.dataset.theme=t;localStorage.setItem("had-theme",t);document.querySelector('meta[name="theme-color"]').content=t==="dark"?"#081426":"#edf3fa";};

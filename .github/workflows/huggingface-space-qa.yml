@@ -1,0 +1,105 @@
+name: Hugging Face Space QA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "huggingface-space/**"
+      - ".github/workflows/huggingface-space-qa.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  space-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Gradio Space dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r huggingface-space/requirements.txt "gradio==6.31.0" gradio_client
+      - name: Install browser test tools
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Start Gradio Server
+        run: |
+          cd huggingface-space
+          python app.py >/tmp/hf-space.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:7860/health >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:7860/health
+          curl -fsS http://127.0.0.1:7860/ | grep -q "Human Action Detection"
+          curl -fsS http://127.0.0.1:7860/static/styles/style.css >/dev/null
+          curl -fsS http://127.0.0.1:7860/static/scripts/state.js >/dev/null
+          curl -fsS http://127.0.0.1:7860/static/scripts/app.js >/dev/null
+      - name: Test Gradio frame API
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          from PIL import Image
+          from gradio_client import Client, handle_file
+
+          image = np.zeros((80, 120, 3), dtype=np.uint8)
+          with tempfile.TemporaryDirectory() as folder:
+              path = Path(folder) / "frame.png"
+              Image.fromarray(image).save(path)
+              client = Client("http://127.0.0.1:7860")
+              result = client.predict(handle_file(str(path)), api_name="/receive_frame")
+          assert result["status"] == "ok", result
+          assert result["frame_shape"] == [80, 120, 3], result
+          assert result["frame_dtype"] == "uint8", result
+          assert result["model_connected"] is False, result
+          print("Gradio PIL -> NumPy frame API passed:", result)
+          PY
+      - name: Capture and test desktop/mobile UI
+        run: |
+          mkdir -p artifacts
+          node <<'NODE'
+          const { chromium } = require("playwright");
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const errors = [];
+            const page = await browser.newPage({ viewport: { width: 1280, height: 1170 } });
+            page.on("pageerror", error => errors.push(error.message));
+            await page.goto("http://127.0.0.1:7860/", { waitUntil: "networkidle" });
+            if (await page.locator(".layout").count() !== 1) throw new Error("Dashboard did not render");
+            await page.screenshot({ path: "artifacts/hf-desktop-dark.png", fullPage: true });
+            await page.locator("#themeToggle").click();
+            if (await page.locator("html").getAttribute("data-theme") !== "light") throw new Error("Light theme failed");
+            await page.screenshot({ path: "artifacts/hf-desktop-light.png", fullPage: true });
+            await page.evaluate(() => window.ActionUI.setState({ fps: 31.4, people: [{ id: 1, person: "Person 1", action: "Walking", confidence: 0.97 }] }));
+            if (await page.locator("#peopleCount").innerText() !== "1") throw new Error("UI state module failed");
+            const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+            mobile.on("pageerror", error => errors.push(error.message));
+            await mobile.goto("http://127.0.0.1:7860/", { waitUntil: "networkidle" });
+            await mobile.screenshot({ path: "artifacts/hf-mobile-dark.png", fullPage: true });
+            const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+            if (overflow) throw new Error("Mobile horizontal overflow detected");
+            if (errors.length) throw new Error(errors.join("\\n"));
+            await browser.close();
+            console.log("Hugging Face UI passed: desktop, light/dark, state module, mobile.");
+          })().catch(error => { console.error(error); process.exit(1); });
+          NODE
+      - name: Upload previews and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: huggingface-space-previews
+          path: |
+            artifacts/
+            /tmp/hf-space.log
+          if-no-files-found: warn
+          retention-days: 14

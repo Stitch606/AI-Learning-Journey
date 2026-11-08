@@ -12,20 +12,27 @@ short_description: Custom action detection web interface
 
 # Human Action Detection
 
-A custom web interface served by Gradio Server. The frontend is built with HTML, CSS, and JavaScript; Python endpoints are provided by Gradio's API engine and can use Hugging Face ZeroGPU.
+A custom HTML/CSS/JavaScript dashboard served by **Gradio Server**. Gradio remains the application server, API bridge, queue, and ZeroGPU integration.
 
-## Project files
+## Layout
 
-- `app.py`: Gradio Server, custom routes, and queued Python API.
-- `templates/index.html`: Web interface.
-- `static/style.css`: Responsive interface styling.
-- `static/app.js`: Camera/video controls and Gradio JavaScript client.
+- `app.py`: Gradio Server, frontend routes, and frame API.
 - `gpu.py`: ZeroGPU decorator helper and startup GPU registration.
+- `templates/index.html`: Main HTML page.
+- `static/styles/style.css`: All interface styling.
+- `static/scripts/state.js`: UI state and theme state.
+- `static/scripts/app.js`: UI behavior, camera/video capture, and Gradio client.
+- `process/`: Model implementation and weights. Kept separate from the frontend.
 - `requirements.txt`: Additional Python dependencies.
 
-## Current status
+## Frame flow
 
-The interface supports camera preview and video upload. The analysis endpoint is a connection placeholder; the YOLO/action-recognition pipeline has not yet been connected.
+1. The browser captures a camera or video frame and resizes it before transfer.
+2. The JavaScript Gradio client sends the frame to `/receive_frame`.
+3. Gradio receives a PIL image; `process_frame()` converts it to an RGB NumPy array.
+4. The endpoint returns a result payload to the browser.
+
+The frame endpoint currently validates the Gradio bridge and image conversion. The YOLO Pose → ST-GCN++ inference pipeline is the next integration step.
 
 ## Run locally
 
@@ -34,4 +41,4 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Gradio 6.31.0 is provided by the Hugging Face Space SDK version declared above.
+Open `http://localhost:7860`.

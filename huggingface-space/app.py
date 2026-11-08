@@ -1,17 +1,22 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from pathlib import Path
 
 import gradio as gr
+import numpy as np
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 
 from gpu import gpu, gpu_ready
 
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).resolve().parent
 
-# Gradio Server keeps the Gradio API engine, queue, and ZeroGPU integration
-# while allowing a completely custom HTML/CSS/JS frontend.
-app = gr.Server()
+# Gradio Server is the application server and API bridge.
+# The custom frontend is served as static files; inference stays in process/.
+app = gr.Server(title="Human Action Detection")
 
 app.mount(
     "/static",
@@ -30,18 +35,48 @@ async def health():
     return {"status": "ok", "frontend": "ready", "model": "not_connected"}
 
 
-@app.api(name="analyze_video")
-@gpu
-def analyze_video(video_path: str):
+def process_frame(frame: Image.Image) -> dict:
     """
-    Frontend-to-Gradio API connection.
+    Frontend frames arrive through Gradio as PIL images.
+    Convert to RGB NumPy once here, then connect the YOLO Pose -> ST-GCN++ pipeline.
+    """
+    frame_np = np.asarray(frame.convert("RGB"), dtype=np.uint8)
 
-    Replace this response with the real detection pipeline when the model
-    and its preprocessing/postprocessing code are connected.
-    """
+    # The model pipeline in process/ will replace this placeholder.
+    return {
+        "people": [],
+        "fps": 0.0,
+        "logs": [],
+        "model_connected": False,
+        "message": "Frame received and converted to NumPy. Model pending.",
+        "frame_shape": list(frame_np.shape),
+        "frame_dtype": str(frame_np.dtype),
+    }
+
+
+@app.api(name="receive_frame", description="Receive one camera or video frame for action analysis.")
+@gpu
+def receive_frame(frame: Image.Image) -> dict:
+    if frame is None:
+        return {"status": "error", "message": "No frame received."}
+
+    rgb_frame = frame.convert("RGB")
+    result = process_frame(rgb_frame)
+    return {
+        "status": "ok",
+        "width": rgb_frame.width,
+        "height": rgb_frame.height,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        **result,
+    }
+
+
+@app.api(name="analyze_video", description="Legacy video-analysis endpoint.")
+@gpu
+def analyze_video(video_path: str) -> dict:
     return {
         "status": "model_not_connected",
-        "message": "The web interface is running, but the detection pipeline has not been connected yet.",
+        "message": "The action-recognition pipeline has not been connected yet.",
         "received_video": bool(video_path),
     }
 
