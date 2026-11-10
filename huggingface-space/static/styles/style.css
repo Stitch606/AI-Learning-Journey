@@ -188,3 +188,10 @@ html[data-theme=light] .empty-actions button.primary{background:#087df2;color:wh
     gap: 20px;
   }
 }
+
+
+/* Streamed YOLO annotations: bounding boxes only. */
+.video > #cameraVideo { position: relative; z-index: 0; }
+.video > #inferenceOverlay { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.video > #inferenceOverlay[hidden] { display: none; }
+.video > .live, .video > .fps { z-index: 2; }
