@@ -23,3 +23,5 @@ jobs:
           hf_token: ${{ secrets.CHATGPT_SPACE_EDITOR }}
           subdirectory: huggingface-space
           space_sdk: gradio
+
+# Keep the Hugging Face Space synchronized with runtime model assets.
