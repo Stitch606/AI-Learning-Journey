@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from threading import Lock
+from time import monotonic, perf_counter
 
 import numpy as np
 import torch
 from ultralytics import YOLO
 
-try:
-    from .capture import capture
-    from .stream_manager import StreamManager
-except ImportError:
-    from capture import capture
-    from stream_manager import StreamManager
+from .stream_manager import StreamManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -54,81 +51,150 @@ def load_models(
     return yolo, mlti
 
 
-def run_streaming_inference(
-    video_obj,
-    yolo=None,
-    mlti=None,
-    yolo_model=DEFAULT_YOLO_MODEL,
-    stgcn_checkpoint=DEFAULT_STGCN_CHECKPOINT,
-):
-    """Run video capture -> YOLO tracking/pose -> per-person ST-GCN++ prediction."""
-    if isinstance(video_obj, (str, Path, int)):
-        video_obj = capture(str(video_obj) if isinstance(video_obj, Path) else video_obj)
+class StreamingInference:
+    """Persistent per-frame inference state for the Gradio frame endpoint."""
 
-    owns_capture = isinstance(video_obj, capture)
+    def __init__(self, yolo=None, mlti=None):
+        if yolo is None or mlti is None:
+            loaded_yolo, loaded_mlti = load_models()
+            yolo = yolo or loaded_yolo
+            mlti = mlti or loaded_mlti
 
-    if yolo is None or mlti is None:
-        loaded_yolo, loaded_mlti = load_models(
-            yolo_model=yolo_model,
-            stgcn_checkpoint=stgcn_checkpoint,
+        self.yolo = yolo
+        self.mlti = mlti
+        self.manager = StreamManager()
+        self.predictions = {}
+        self.last_frame_at = None
+        self.last_fps = 0.0
+
+    def reset(self):
+        self.manager.reset()
+        self.predictions.clear()
+        self.last_frame_at = None
+
+    def process_frame(self, rgb_frame):
+        started = perf_counter()
+        now = monotonic()
+
+        if (
+            self.last_frame_at is not None
+            and now - self.last_frame_at > self.manager.disappear_timeout
+        ):
+            self.reset()
+
+        self.last_frame_at = now
+
+        frame = np.asarray(rgb_frame, dtype=np.uint8)
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError("Expected an RGB frame with shape [height, width, 3]")
+
+        height, width = frame.shape[:2]
+        bgr_frame = np.ascontiguousarray(frame[:, :, ::-1])
+
+        results = self.yolo.track(
+            bgr_frame,
+            persist=True,
+            verbose=False,
         )
-        if yolo is None:
-            yolo = loaded_yolo
-        if mlti is None:
-            mlti = loaded_mlti
 
-    manager = StreamManager()
+        detected = []
+        ready = []
 
-    try:
-        while True:
-            ret, frame = video_obj.read()
-            if not ret:
-                break
+        if results and results[0].keypoints is not None:
+            result = results[0]
+            keypoints_tensor = result.keypoints.data
 
-            results = yolo.track(
-                frame,
-                persist=True,
-                verbose=False,
-            )
+            if result.boxes is not None and result.boxes.id is not None:
+                keypoints = keypoints_tensor.cpu().numpy()
+                track_ids = result.boxes.id.cpu().numpy().astype(np.int64)
 
-            if (
-                len(results) > 0
-                and results[0].boxes is not None
-                and results[0].boxes.id is not None
-                and results[0].keypoints is not None
-            ):
-                result = results[0]
-
-                keypoints = result.keypoints.data.cpu().numpy()
-                track_ids = result.boxes.id.cpu().numpy()
-
-                ready = manager.update(
+                ready = self.manager.update(
                     keypoints=keypoints,
                     track_ids=track_ids,
                 )
 
-                if ready:
-                    person_ids = [person["track_id"] for person in ready]
-
-                    ready_keypoints = np.stack(
-                        [person["keypoints"] for person in ready],
-                        axis=0,
-                    )
-
-                    prediction = mlti.predict(
-                        ready_keypoints,
-                        topk=5,
-                        person_ids=person_ids,
-                        image_size=(frame.shape[1], frame.shape[0]),
-                    )
-
-                    print(prediction)
-
+                for track_id in track_ids:
+                    detected.append(int(track_id))
             else:
-                manager.update(
+                self.manager.update(
                     keypoints=np.empty((0, 17, 3), dtype=np.float32),
                     track_ids=np.empty((0,), dtype=np.int64),
                 )
-    finally:
-        if owns_capture:
-            video_obj.release()
+        else:
+            self.manager.update(
+                keypoints=np.empty((0, 17, 3), dtype=np.float32),
+                track_ids=np.empty((0,), dtype=np.int64),
+            )
+
+        if ready:
+            person_ids = [person["track_id"] for person in ready]
+            ready_keypoints = np.stack(
+                [person["keypoints"] for person in ready],
+                axis=0,
+            )
+
+            prediction = self.mlti.predict(
+                ready_keypoints,
+                topk=5,
+                person_ids=person_ids,
+                image_size=(width, height),
+            )
+
+            for person in prediction["persons"]:
+                self.predictions[int(person["person_id"])] = {
+                    "action": person["action"],
+                    "confidence": person["confidence"],
+                }
+
+        active_tracks = set(self.manager.get_active_tracks())
+        self.predictions = {
+            track_id: prediction
+            for track_id, prediction in self.predictions.items()
+            if track_id in active_tracks
+        }
+
+        people = []
+        for track_id in detected:
+            prediction = self.predictions.get(track_id)
+            people.append({
+                "id": track_id,
+                "person": f"Person {track_id}",
+                "action": prediction["action"] if prediction else "Collecting frames",
+                "confidence": prediction["confidence"] if prediction else 0.0,
+            })
+
+        elapsed = perf_counter() - started
+        self.last_fps = 1.0 / elapsed if elapsed > 0 else 0.0
+
+        return {
+            "people": people,
+            "fps": self.last_fps,
+            "model_connected": True,
+            "modelStatus": "YOLO Pose + ST-GCN++ connected",
+            "message": "Collecting 100 frames per person before the first action prediction.",
+            "frame_shape": list(frame.shape),
+            "frame_dtype": str(frame.dtype),
+        }
+
+
+_streaming_inference = None
+_streaming_lock = Lock()
+
+
+def process_stream_frame(rgb_frame):
+    """Process one RGB frame while preserving tracker and person buffers."""
+    global _streaming_inference
+
+    with _streaming_lock:
+        if _streaming_inference is None:
+            _streaming_inference = StreamingInference()
+        return _streaming_inference.process_frame(rgb_frame)
+
+
+def reset_streaming_state():
+    """Clear tracker and temporal buffers before starting a fresh stream."""
+    global _streaming_inference
+
+    with _streaming_lock:
+        if _streaming_inference is not None:
+            _streaming_inference.reset()
