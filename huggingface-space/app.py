@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from gpu import gpu, gpu_ready
+from process.streaming_inference import process_stream_frame, reset_streaming_state
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,26 +33,13 @@ async def homepage():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "frontend": "ready", "model": "not_connected"}
+    return {"status": "ok", "frontend": "ready", "model": "connected"}
 
 
 def process_frame(frame: Image.Image) -> dict:
-    """
-    Frontend frames arrive through Gradio as PIL images.
-    Convert to RGB NumPy once here, then connect the YOLO Pose -> ST-GCN++ pipeline.
-    """
+    """Convert a Gradio PIL frame to RGB NumPy and run persistent inference."""
     frame_np = np.asarray(frame.convert("RGB"), dtype=np.uint8)
-
-    # The model pipeline in process/ will replace this placeholder.
-    return {
-        "people": [],
-        "fps": 0.0,
-        "logs": [],
-        "model_connected": False,
-        "message": "Frame received and converted to NumPy. Model pending.",
-        "frame_shape": list(frame_np.shape),
-        "frame_dtype": str(frame_np.dtype),
-    }
+    return process_stream_frame(frame_np)
 
 
 def load_frame(frame: dict | Image.Image) -> Image.Image:
@@ -88,12 +76,19 @@ def receive_frame(frame: dict) -> dict:
     }
 
 
+@app.api(name="reset_stream", description="Reset person tracking and temporal buffers.")
+@gpu
+def reset_stream() -> dict:
+    reset_streaming_state()
+    return {"status": "ok", "message": "Stream state reset."}
+
+
 @app.api(name="analyze_video", description="Legacy video-analysis endpoint.")
 @gpu
 def analyze_video(video_path: str) -> dict:
     return {
         "status": "model_not_connected",
-        "message": "The action-recognition pipeline has not been connected yet.",
+        "message": "Use the receive_frame endpoint to stream frames.",
         "received_video": bool(video_path),
     }
 
