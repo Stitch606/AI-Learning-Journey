@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
 
+import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
@@ -99,9 +101,27 @@ class StreamingInference:
 
         detected = []
         ready = []
+        result = results[0] if results else None
 
-        if results and results[0].keypoints is not None:
-            result = results[0]
+        if result is not None:
+            annotated_frame = result.plot(
+                boxes=True,
+                labels=False,
+                conf=False,
+                kpt_line=False,
+                kpt_radius=0,
+            )
+            encoded_ok, encoded_frame = cv2.imencode(".jpg", annotated_frame)
+            annotated_frame_data = (
+                "data:image/jpeg;base64,"
+                + base64.b64encode(encoded_frame).decode("ascii")
+                if encoded_ok
+                else None
+            )
+        else:
+            annotated_frame_data = None
+
+        if result is not None and result.keypoints is not None:
             keypoints_tensor = result.keypoints.data
 
             if result.boxes is not None and result.boxes.id is not None:
@@ -174,6 +194,7 @@ class StreamingInference:
             "message": "Collecting 100 frames per person before the first action prediction.",
             "frame_shape": list(frame.shape),
             "frame_dtype": str(frame.dtype),
+            "annotated_frame": annotated_frame_data,
         }
 
 
