@@ -3,14 +3,15 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
 
 try:
+    from .capture import capture
     from .stream_manager import StreamManager
 except ImportError:
+    from capture import capture
     from stream_manager import StreamManager
 
 
@@ -23,22 +24,6 @@ DEFAULT_STGCN_CHECKPOINT = (
     WEIGHTS_DIR / "stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth"
 )
 MAX_PERSONS = 10
-
-
-class capture:
-    def __init__(self, video):
-        self.video = video
-
-        self.cap = cv2.VideoCapture(self.video)
-        if not self.cap.isOpened():
-            print("the video is broken")
-
-    def read(self):
-        ret, frame = self.cap.read()
-        return ret, frame
-
-    def release(self):
-        self.cap.release()
 
 
 def load_models(
