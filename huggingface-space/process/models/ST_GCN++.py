@@ -6,6 +6,8 @@ Module names intentionally mirror the published checkpoint state_dict.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch import nn
@@ -244,11 +246,11 @@ class GCNHead(nn.Module):
         n, m, c, t, v = x.shape
         x = x.reshape(n * m, c, t, v)
         x = torch.nn.functional.adaptive_avg_pool2d(x, 1)
-        x = x.reshape(n, m, c).mean(dim=1)
+        x = x.reshape(n, m, c)
         return self.fc_cls(x)
 
 
-class STGCNPP(nn.Module):
+class STGCNPPMultiPerson(nn.Module):
     """Single public interface for the standalone ST-GCN++ model.
 
     The internal backbone/head classes preserve the checkpoint module names.
@@ -260,11 +262,18 @@ class STGCNPP(nn.Module):
         num_classes=60,
         device="cpu",
         strict=True,
+        max_persons=10,
+        class_names=None,
     ):
         super().__init__()
-        self.backbone = STGCNBackbone()
+        if not isinstance(max_persons, int) or max_persons < 1:
+            raise ValueError("max_persons must be a positive integer")
+        self.max_persons = max_persons
+        self.num_classes = num_classes
+        self.backbone = STGCNBackbone(num_person=2)
         self.cls_head = GCNHead(num_classes=num_classes, in_channels=256)
         self.device = torch.device(device)
+        self.class_names = self._load_class_names(class_names, num_classes)
 
         if checkpoint_path is not None:
             self.load_weights(checkpoint_path, strict=strict)
@@ -299,15 +308,67 @@ class STGCNPP(nn.Module):
         return arr
 
     @classmethod
-    def prepare_input(cls, keypoints, image_size=(1920, 1080), clip_len=100):
-        """Convert raw YOLO COCO-17 coordinates into packed JM model input."""
+    def _validate_person_sequence(cls, keypoints, image_size=(1920, 1080)):
+        """Reject malformed/non-person-like raw YOLO COCO-17 sequences."""
+        arr = cls.validate_keypoints(keypoints)
+        if len(image_size) != 2:
+            raise ValueError("image_size must be (width, height)")
+        w, h = int(image_size[0]), int(image_size[1])
+        if w <= 0 or h <= 0:
+            raise ValueError("image_size values must be positive")
+
+        xy = arr[..., :2]
+        scores = arr[..., 2]
+        visible = scores >= 0.10
+        visible_counts = visible.sum(axis=1)
+        if np.median(visible_counts) < 5:
+            raise ValueError(
+                "Rejected keypoints: fewer than 5 visible joints in a typical frame"
+            )
+
+        visible_xy = xy[visible]
+        if visible_xy.size == 0:
+            raise ValueError("Rejected keypoints: no visible joints")
+
+        outside = (
+            (visible_xy[:, 0] < -0.05 * w) |
+            (visible_xy[:, 0] > 1.05 * w) |
+            (visible_xy[:, 1] < -0.05 * h) |
+            (visible_xy[:, 1] > 1.05 * h)
+        )
+        if outside.mean() > 0.20:
+            raise ValueError(
+                "Rejected keypoints: too many confident joints are outside the image; "
+                "expected raw pixel coordinates from YOLO Pose"
+            )
+
+        widths = []
+        heights = []
+        for frame_xy, frame_visible in zip(xy, visible):
+            points = frame_xy[frame_visible]
+            if len(points) < 5:
+                continue
+            widths.append(float(np.ptp(points[:, 0])))
+            heights.append(float(np.ptp(points[:, 1])))
+
+        min_width = max(8.0, 0.005 * w)
+        min_height = max(8.0, 0.005 * h)
+        if not widths or np.median(widths) < min_width or np.median(heights) < min_height:
+            raise ValueError(
+                "Rejected keypoints: the detected joints occupy an implausibly tiny "
+                "area. Pass pixel coordinates (x, y, confidence), not normalized or "
+                "random values."
+            )
+
+        return arr
+
+    @classmethod
+    def _prepare_single_person(cls, keypoints, image_size=(1920, 1080), clip_len=100):
+        """Convert one person's raw YOLO sequence [T,17,3] to JM [100,17,3]."""
         arr = cls.validate_keypoints(keypoints)
         if clip_len != 100:
             raise ValueError("This checkpoint expects exactly 100 frames")
 
-        # Match PYSKL test pipeline order:
-        # PreNormalize2D -> GenSkeFeat(JM) -> UniformSample(100).
-        # JM differences are computed on the full sequence before sampling.
         full = arr.copy()
         h, w = int(image_size[1]), int(image_size[0])
         xy = full[..., :2]
@@ -322,12 +383,10 @@ class STGCNPP(nn.Module):
         jm_full[:-1, :, :2] = np.diff(xy, axis=0)
         jm_full[:-1, :, 2] = (score[:-1] + score[1:]) / 2.0
 
-        # PYSKL UniformSampleFrames(test_mode=True, num_clips=1,
-        # p_interval=1, seed=255), including modulo looping for short clips.
         num_frames = len(jm_full)
         rng = np.random.RandomState(255)
-        rng.rand()  # PYSKL samples ratio even when p_interval=(1, 1).
-        offset = rng.randint(1)  # p_interval=(1, 1), so offset is zero.
+        rng.rand()
+        offset = rng.randint(1)
         if num_frames < clip_len:
             indices = np.arange(clip_len)
         elif num_frames < clip_len * 2:
@@ -343,43 +402,212 @@ class STGCNPP(nn.Module):
             indices = boundaries[:clip_len] + np.array(
                 [rng.randint(int(size)) for size in sizes])
         indices = (indices + offset) % num_frames
-        sampled = jm_full[indices]
+        return jm_full[indices]
 
-        packed = np.zeros((1, 1, 2, clip_len, 17, 3), dtype=np.float32)
-        packed[0, 0, 0] = sampled
-        return packed
+    @classmethod
+    def _load_class_names(cls, class_names, num_classes):
+        """Load NTU60 labels beside this file, or use caller-provided labels."""
+        if class_names is not None:
+            names = list(class_names)
+        else:
+            labels_path = Path(__file__).with_name("ntu60_labels.txt")
+            if labels_path.exists():
+                names = [
+                    line.strip()
+                    for line in labels_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            else:
+                names = []
+        if len(names) == num_classes:
+            return names
+        if names:
+            raise ValueError(
+                f"Found {len(names)} class names but num_classes={num_classes}. "
+                "Pass a matching class_names list."
+            )
+        return [f"class_{i}" for i in range(num_classes)]
 
-    def predict(self, frame, keypoints):
-        """Run inference from a video frame and its raw YOLO COCO-17 keypoints.
+    def prepare_input(self, keypoints, image_size=(1920, 1080), clip_len=100):
+        """Pack synchronized people into [1,1,P,100,17,3].
 
-        The frame is used to read the original (width, height) automatically;
-        YOLO must still provide keypoints with shape [T, 17, 3].
+        Accepted inputs:
+          [T,17,3]       one person
+          [P,T,17,3]     P people, with the same number of frames
         """
-        if not isinstance(frame, np.ndarray) or frame.ndim not in (2, 3):
-            raise TypeError("frame must be an image/frame as a NumPy array")
-        height, width = frame.shape[:2]
-        if height < 1 or width < 1:
-            raise ValueError("frame must have non-zero width and height")
+        arr = np.asarray(keypoints, dtype=np.float32)
+        if arr.ndim == 3:
+            arr = arr[np.newaxis, ...]
+        if arr.ndim != 4 or arr.shape[2:] != (17, 3):
+            raise ValueError(
+                f"Expected [T,17,3] or [P,T,17,3], got {arr.shape}"
+            )
+        person_count = arr.shape[0]
+        if person_count < 1:
+            raise ValueError("At least one person is required")
+        if person_count > self.max_persons:
+            raise ValueError(
+                f"Received {person_count} people, but max_persons={self.max_persons}"
+            )
 
-        packed = self.prepare_input(
-            keypoints,
-            image_size=(width, height),
+        # Keep the person axis explicit. No dummy person slot is added.
+        packed = np.zeros(
+            (1, 1, person_count, clip_len, 17, 3), dtype=np.float32
         )
-        tensor = torch.from_numpy(packed).to(self.device)
-        self.eval()
-        with torch.inference_mode():
-            return self(tensor)
+        for person_index in range(person_count):
+            packed[0, 0, person_index] = self._prepare_single_person(
+                arr[person_index], image_size=image_size, clip_len=clip_len
+            )
+        return packed, person_count
 
-    def forward_logits(self, keypoint):
+    def _person_logits(self, keypoint):
+        """Return one independent class-logit vector for every person.
+
+        Input: [B, clips, persons, T, V, C]
+        Output: [B, persons, clips, classes]
+        """
         if keypoint.ndim != 6:
             raise ValueError("Expected [B, clips, persons, T, V, C] input")
-        b, clips = keypoint.shape[:2]
+        b, clips, persons, t, v, c = keypoint.shape
+
+        # Keep all real people on the person axis through the backbone.
+        # The backbone applies shared weights per person; the head classifies
+        # each person's pooled feature independently without reducing P.
+        model_input = keypoint.reshape(b * clips, persons, t, v, c)
+        features = self.backbone(model_input)   # [B*clips, P, C, T', V]
+        logits = self.cls_head(features)        # [B*clips, P, classes]
+        return logits.reshape(b, clips, persons, self.num_classes).permute(0, 2, 1, 3)
+
+    @staticmethod
+    def _format_prediction(probabilities, class_names, topk):
+        k = min(max(int(topk), 1), probabilities.numel())
+        values, indices = torch.topk(probabilities, k=k)
+        ranked = [
+            {
+                "class_id": int(index.item()),
+                "action": class_names[int(index.item())],
+                "confidence": float(value.item()),
+            }
+            for value, index in zip(values, indices)
+        ]
+        best = ranked[0]
+        return {
+            "class_id": best["class_id"],
+            "action": best["action"],
+            "confidence": best["confidence"],
+            "top_predictions": ranked,
+            "probabilities": probabilities.detach().cpu().tolist(),
+        }
+
+    def predict(self, keypoints, topk=5, person_ids=None,
+                image_size=(1920, 1080)):
+        """Predict actions directly from keypoint data; no video frame is required.
+
+        Accepted raw input layouts:
+          [T, 17, 3]                 one person, one clip
+          [P, T, 17, 3]              multiple people, one clip
+          [B, clips, T, P, 17, 3]    streaming batches as collected frame-first
+
+        The streaming layout is reordered internally to the model layout
+        [B, clips, P, T, 17, 3]. image_size is (width, height), matching
+        PYSKL PreNormalize2D's default image shape of (1080, 1920).
+        """
+        if torch.is_tensor(keypoints):
+            arr = keypoints.detach().cpu().numpy().astype(np.float32, copy=False)
+        else:
+            arr = np.asarray(keypoints, dtype=np.float32)
+
+        if arr.ndim == 3:
+            # [T, V, C] -> [B=1, clips=1, T, P=1, V, C]
+            arr = arr[None, None, :, None, :, :]
+        elif arr.ndim == 4:
+            # Existing raw multi-person API: [P, T, V, C]
+            arr = arr[None, None, :, :, :, :].transpose(0, 1, 3, 2, 4, 5)
+        elif arr.ndim != 6:
+            raise ValueError(
+                "Expected [T,17,3], [P,T,17,3], or "
+                "[B,clips,T,P,17,3] keypoints"
+            )
+
+        if arr.shape[-2:] != (17, 3):
+            raise ValueError(
+                f"Expected final dimensions [17,3], got {arr.shape}"
+            )
+
+        batch_size, num_clips, num_frames, person_count = arr.shape[:4]
+        if batch_size < 1 or num_clips < 1 or num_frames < 1 or person_count < 1:
+            raise ValueError("Batch, clips, frames, and persons must be non-empty")
+        if person_count > self.max_persons:
+            raise ValueError(
+                f"Received {person_count} people, but max_persons={self.max_persons}"
+            )
+        if not np.isfinite(arr).all():
+            raise ValueError("Keypoints contain NaN or infinite values")
+        if np.any(arr[..., 2] < 0) or np.any(arr[..., 2] > 1):
+            raise ValueError("Confidence values must be in [0,1]")
+        if person_ids is not None and len(person_ids) != person_count:
+            raise ValueError(
+                f"person_ids must contain {person_count} IDs, got {len(person_ids)}"
+            )
+
+        # Prepare every clip/person sequence. The frame dimension is metadata
+        # only; no image or video frame is passed to the recognizer.
+        packed = np.zeros(
+            (batch_size, num_clips, person_count, 100, 17, 3),
+            dtype=np.float32,
+        )
+        for b in range(batch_size):
+            for clip in range(num_clips):
+                for person in range(person_count):
+                    packed[b, clip, person] = self._prepare_single_person(
+                        arr[b, clip, :, person],
+                        image_size=image_size,
+                    )
+
+        tensor = torch.from_numpy(packed).to(self.device)
+        self.eval()
+        outputs = []
+        with torch.inference_mode():
+            batch_logits = self._person_logits(tensor)
+            for b in range(batch_size):
+                # PYSKL averages clip probabilities at test time.
+                person_probabilities = torch.softmax(
+                    batch_logits[b], dim=-1
+                ).mean(dim=1)
+
+                people = [
+                    {
+                        "person_id": person_ids[index] if person_ids is not None else index + 1,
+                        "slot_index": index,
+                        **self._format_prediction(
+                            person_probabilities[index], self.class_names, topk
+                        ),
+                    }
+                    for index in range(person_count)
+                ]
+                outputs.append({
+                    "num_persons": person_count,
+                    "max_persons": self.max_persons,
+                    "persons": people,
+                })
+
+        return outputs[0] if batch_size == 1 else outputs
+
+    def _person_clip_logits(self, keypoint):
+        """Return independent logits with shape [B, clips, persons, classes]."""
+        if keypoint.ndim != 6:
+            raise ValueError("Expected [B, clips, persons, T, V, C] input")
+        b, clips, persons = keypoint.shape[:3]
         x = keypoint.reshape((b * clips,) + keypoint.shape[2:])
         features = self.backbone(x)
-        logits = self.cls_head(features)
-        return logits.reshape(b, clips, -1).mean(dim=1)
+        logits = self.cls_head(features)  # [B*clips, persons, classes]
+        return logits.reshape(b, clips, persons, self.num_classes)
+
+    def forward_logits(self, keypoint):
+        # Average only test-time clips; the person axis is always preserved.
+        return self._person_clip_logits(keypoint).mean(dim=1)
 
     def forward(self, keypoint, return_loss=False, **kwargs):
-        logits = self.forward_logits(keypoint)
-        # PYSKL RecognizerGCN defaults to average_clips='prob'.
-        return torch.softmax(logits, dim=-1)
+        # Output: [B, persons, classes], never a scene-level person average.
+        clip_logits = self._person_clip_logits(keypoint)
+        return torch.softmax(clip_logits, dim=-1).mean(dim=1)
