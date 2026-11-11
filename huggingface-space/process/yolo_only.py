@@ -162,11 +162,15 @@ class YOLOOnlyInference:
         loader = QueueFrameLoader(frames, stopped)
 
         # One long-lived predict call consumes the incoming queue.
+        previous_result_at = perf_counter()
         for result in self.model.predict(
             source=loader,
             stream=True,
             verbose=False,
         ):
+            now = perf_counter()
+            elapsed = now - previous_result_at
+            previous_result_at = now
             frame_id = loader.current_frame_id
             frame = result.orig_img
             rendered, people = self._render(frame, result)
@@ -180,7 +184,7 @@ class YOLOOnlyInference:
                 "frame_shape": list(frame.shape),
                 "frame_dtype": str(frame.dtype),
                 "annotated_frame": self._encode(rendered),
-                "fps": 0.0,
+                "fps": (1.0 / elapsed) if elapsed > 0 else 0.0,
             }
 
 
