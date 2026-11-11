@@ -56,6 +56,11 @@ async function consumeYoloResults(job,generation){
   }catch(e){
     if(generation===streamGeneration)log("YOLO result stream error: "+e.message,"red");
   }
+  if(generation===streamGeneration&&state.running&&activeStreamId){
+    log("Refreshing the YOLO stream session","yellow");
+    await new Promise(resolve=>setTimeout(resolve,500));
+    if(generation===streamGeneration&&state.running)void startFrameTransfer();
+  }
 }
 async function flushOutgoingFrames(streamId,generation){
   if(sendingFrames)return;
