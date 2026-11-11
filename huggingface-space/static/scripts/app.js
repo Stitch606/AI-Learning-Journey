@@ -18,7 +18,7 @@ window.ActionUI={getState:()=>({...state,cameraStream:null,videoUrl:null,bridge:
 async function connectBridge(){if(state.bridge)return state.bridge;if($("#engineStatusText"))$("#engineStatusText").textContent="Connecting to Gradio…";try{const {Client}=await import("https://esm.sh/@gradio/client@2.7.2");state.bridge=await Client.connect(location.origin);state.bridgeConnected=true;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge connected · awaiting model inference";log("Connected to Gradio data bridge","green");return state.bridge;}catch(e){state.bridgeConnected=false;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge offline · retry when ready";log("Gradio connection failed: "+e.message,"red");throw e;}}
 const CAPTURE_INTERVAL_MS=33;
 let frameCanvas=null,frameContext=null,captureLoopTask=null;
-let streamGeneration=0,activeStreamId=null,streamJob=null;
+let streamGeneration=0,activeStreamId=null,streamJob=null,resolveStreamReady=null;
 let nextFrameId=0,outgoingFrames=[],sendingFrames=false,lastRenderedFrameId=-1;
 
 function getFrameCanvas(video){
@@ -43,6 +43,10 @@ async function consumeYoloResults(job,generation){
       if(message.type!=="data")continue;
       const payload=Array.isArray(message.data)?message.data[0]:message.data;
       if(!payload||typeof payload!=="object")continue;
+      if(payload.status==="ready"){
+        if(resolveStreamReady){resolveStreamReady(true);resolveStreamReady=null;}
+        continue;
+      }
       if(payload.status==="ok"){
         if(Number(payload.frame_id)>lastRenderedFrameId){
           lastRenderedFrameId=Number(payload.frame_id);
@@ -56,6 +60,7 @@ async function consumeYoloResults(job,generation){
   }catch(e){
     if(generation===streamGeneration)log("YOLO result stream error: "+e.message,"red");
   }
+  if(resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
   if(generation===streamGeneration&&state.running&&activeStreamId){
     log("Refreshing the YOLO stream session","yellow");
     await new Promise(resolve=>setTimeout(resolve,500));
@@ -125,13 +130,23 @@ async function startFrameTransfer(){
     lastRenderedFrameId=-1;
     outgoingFrames=[];
     state.bridgeBusy=true;
+    let readyResolve;
+    const readyPromise=new Promise(resolve=>{readyResolve=resolve;});
+    resolveStreamReady=readyResolve;
     streamJob=bridge.submit("/run_yolo_stream",{stream_id:activeStreamId});
     void consumeYoloResults(streamJob,generation);
+    const ready=await Promise.race([
+      readyPromise,
+      new Promise(resolve=>setTimeout(()=>resolve(false),15000))
+    ]);
+    if(resolveStreamReady===readyResolve)resolveStreamReady=null;
+    if(!ready)throw new Error("YOLO worker did not become ready.");
+    if(generation!==streamGeneration)return;
     captureLoopTask=captureContinuously(activeStreamId,generation);
     log("Continuous YOLO stream started","green");
   }catch(e){
     if(generation===streamGeneration){
-      state.bridgeBusy=false;
+      stopFrameTransfer();
       log("Unable to start YOLO stream: "+e.message,"red");
     }
   }
