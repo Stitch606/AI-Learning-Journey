@@ -60,19 +60,23 @@ async function consumeYoloResults(job,generation){
 async function flushOutgoingFrames(streamId,generation){
   if(sendingFrames)return;
   sendingFrames=true;
+  let currentItem=null;
   try{
     const bridge=await connectBridge();
     while(outgoingFrames.length&&generation===streamGeneration&&state.running){
-      const item=outgoingFrames.shift();
-      const file=new File([item.blob],"frame-"+item.id+".jpg",{type:"image/jpeg"});
+      currentItem=outgoingFrames.shift();
+      const file=new File([currentItem.blob],"frame-"+currentItem.id+".jpg",{type:"image/jpeg"});
       await bridge.predict("/push_yolo_frame",{
         stream_id:streamId,
-        frame_id:item.id,
+        frame_id:currentItem.id,
         frame:file
       });
+      currentItem=null;
     }
   }catch(e){
+    if(currentItem)outgoingFrames.unshift(currentItem);
     if(generation===streamGeneration)log("Frame transfer error: "+e.message,"red");
+    await new Promise(resolve=>setTimeout(resolve,250));
   }finally{
     sendingFrames=false;
     if(outgoingFrames.length&&generation===streamGeneration&&state.running){
