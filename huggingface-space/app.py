@@ -187,6 +187,7 @@ def push_yolo_frame(stream_id: str, frame_id: int, frame: dict) -> dict:
 )
 @gpu(duration=120)
 def run_yolo_stream(stream_id: str) -> Generator[dict, None, None]:
+    yield {"status": "ready", "stream_id": stream_id}
     yield from process_yolo_stream(stream_id)
 
 
