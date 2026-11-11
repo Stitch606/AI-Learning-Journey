@@ -166,15 +166,95 @@ class StreamingInference:
 
         annotated_frame = None
         if result is not None:
-            plotted_frame = result.plot(
-                boxes=True,
-                labels=True,
-                conf=True,
-                kpt_line=True,
-            )
+            boxes = result.boxes
+            keypoints = result.keypoints
+
+            if boxes is not None and keypoints is not None:
+                boxes_xyxy = boxes.xyxy.detach().cpu().numpy()
+                keypoints_data = keypoints.data.detach().cpu().numpy()
+                confidences = (
+                    boxes.conf.detach().cpu().numpy()
+                    if boxes.conf is not None
+                    else np.ones((len(boxes_xyxy),), dtype=np.float32)
+                )
+                track_ids = (
+                    boxes.id.detach().cpu().numpy().astype(np.int64)
+                    if boxes.id is not None
+                    else np.arange(len(boxes_xyxy), dtype=np.int64)
+                )
+
+                skeleton = (
+                    (0, 1), (0, 2), (1, 3), (2, 4),
+                    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+                    (5, 11), (6, 12), (11, 12),
+                    (11, 13), (13, 15), (12, 14), (14, 16),
+                )
+
+                for index, box in enumerate(boxes_xyxy):
+                    x1, y1, x2, y2 = np.round(box).astype(int)
+                    track_id = int(track_ids[index])
+                    person_prediction = self.predictions.get(track_id)
+
+                    cv2.rectangle(
+                        bgr_frame,
+                        (x1, y1),
+                        (x2, y2),
+                        (160, 90, 255),
+                        2,
+                    )
+
+                    if person_prediction:
+                        label = (
+                            f"Person {track_id} | "
+                            f"{person_prediction['action']} "
+                            f"{person_prediction['confidence']:.2f}"
+                        )
+                    else:
+                        label = f"Person {track_id} | {confidences[index]:.2f}"
+
+                    text_y = max(y1 - 10, 20)
+                    cv2.putText(
+                        bgr_frame,
+                        label,
+                        (x1, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (160, 90, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                    joints = keypoints_data[index]
+                    visible = joints[:, 2] >= 0.25
+
+                    for joint_a, joint_b in skeleton:
+                        if visible[joint_a] and visible[joint_b]:
+                            point_a = tuple(np.round(joints[joint_a, :2]).astype(int))
+                            point_b = tuple(np.round(joints[joint_b, :2]).astype(int))
+                            cv2.line(
+                                bgr_frame,
+                                point_a,
+                                point_b,
+                                (255, 180, 70),
+                                2,
+                                cv2.LINE_AA,
+                            )
+
+                    for joint_index, joint in enumerate(joints):
+                        if visible[joint_index]:
+                            point = tuple(np.round(joint[:2]).astype(int))
+                            cv2.circle(
+                                bgr_frame,
+                                point,
+                                3,
+                                (70, 220, 255),
+                                -1,
+                                cv2.LINE_AA,
+                            )
+
             encoded_ok, encoded_image = cv2.imencode(
                 ".jpg",
-                plotted_frame,
+                bgr_frame,
                 [cv2.IMWRITE_JPEG_QUALITY, 80],
             )
             if encoded_ok:
