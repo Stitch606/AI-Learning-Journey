@@ -19,7 +19,7 @@ async function connectBridge(){if(state.bridge)return state.bridge;if($("#engine
 const CAPTURE_INTERVAL_MS=33;
 let frameCanvas=null,frameContext=null,captureLoopTask=null;
 let streamGeneration=0,activeStreamId=null,streamJob=null,resolveStreamReady=null;
-let nextFrameId=0,outgoingFrames=[],sendingFrames=false,lastRenderedFrameId=-1;
+let nextFrameId=0,outgoingFrames=[],sendingGenerations=new Set(),lastRenderedFrameId=-1;
 
 function getFrameCanvas(video){
   if(!frameCanvas){frameCanvas=document.createElement("canvas");frameContext=frameCanvas.getContext("2d",{alpha:false});}
@@ -44,7 +44,7 @@ async function consumeYoloResults(job,generation){
       const payload=Array.isArray(message.data)?message.data[0]:message.data;
       if(!payload||typeof payload!=="object")continue;
       if(payload.status==="ready"){
-        if(resolveStreamReady){resolveStreamReady(true);resolveStreamReady=null;}
+        if(generation===streamGeneration&&resolveStreamReady){resolveStreamReady(true);resolveStreamReady=null;}
         continue;
       }
       if(payload.status==="ok"){
@@ -60,7 +60,7 @@ async function consumeYoloResults(job,generation){
   }catch(e){
     if(generation===streamGeneration)log("YOLO result stream error: "+e.message,"red");
   }
-  if(resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
+  if(generation===streamGeneration&&resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
   if(generation===streamGeneration&&state.running&&activeStreamId){
     log("Refreshing the YOLO stream session","yellow");
     await new Promise(resolve=>setTimeout(resolve,500));
@@ -68,8 +68,8 @@ async function consumeYoloResults(job,generation){
   }
 }
 async function flushOutgoingFrames(streamId,generation){
-  if(sendingFrames)return;
-  sendingFrames=true;
+  if(sendingGenerations.has(generation))return;
+  sendingGenerations.add(generation);
   let currentItem=null;
   try{
     const bridge=await connectBridge();
@@ -84,11 +84,11 @@ async function flushOutgoingFrames(streamId,generation){
       currentItem=null;
     }
   }catch(e){
-    if(currentItem)outgoingFrames.unshift(currentItem);
+    if(currentItem&&generation===streamGeneration)outgoingFrames.unshift(currentItem);
     if(generation===streamGeneration)log("Frame transfer error: "+e.message,"red");
     await new Promise(resolve=>setTimeout(resolve,250));
   }finally{
-    sendingFrames=false;
+    sendingGenerations.delete(generation);
     if(outgoingFrames.length&&generation===streamGeneration&&state.running){
       void flushOutgoingFrames(streamId,generation);
     }
@@ -158,7 +158,7 @@ function stopFrameTransfer(){
   activeStreamId=null;
   streamJob=null;
   outgoingFrames=[];
-  sendingFrames=false;
+  if(resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
   captureLoopTask=null;
   state.bridgeBusy=false;
   state.bridgeTimer=null;
