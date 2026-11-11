@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
+from struct import unpack_from
 from time import perf_counter
 
 import gradio as gr
@@ -21,6 +23,9 @@ from process.yolo_only import (
 
 
 BASE_DIR = Path(__file__).resolve().parent
+BATCH_MAGIC = b"HAB1"
+MAX_BATCH_FRAMES = 30
+
 # Gradio Server is the application server and API bridge.
 # The custom frontend is served as static files; inference stays in process/.
 app = gr.Server(title="Human Action Detection")
@@ -63,6 +68,40 @@ def load_frame(frame: dict | Image.Image) -> Image.Image:
 
     raise ValueError("The Gradio frame payload did not contain a readable image path.")
 
+
+
+def load_frame_batch(batch: dict) -> tuple[list[Image.Image], float]:
+    """Decode the legacy HAB1 frame container used by the action-recognition endpoint."""
+    if not isinstance(batch, dict) or not batch.get("path"):
+        raise ValueError("The frame batch payload did not contain a readable file path.")
+
+    raw = Path(batch["path"]).read_bytes()
+    if len(raw) < 8 or raw[:4] != BATCH_MAGIC:
+        raise ValueError("Invalid frame batch header.")
+
+    frame_count = unpack_from(">I", raw, 4)[0]
+    if frame_count < 1 or frame_count > MAX_BATCH_FRAMES:
+        raise ValueError(f"Frame batch must contain between 1 and {MAX_BATCH_FRAMES} frames.")
+
+    decode_started = perf_counter()
+    offset = 8
+    frames = []
+    for index in range(frame_count):
+        if offset + 4 > len(raw):
+            raise ValueError(f"Frame batch ended before frame {index + 1} length.")
+        frame_size = unpack_from(">I", raw, offset)[0]
+        offset += 4
+        end = offset + frame_size
+        if frame_size <= 0 or end > len(raw):
+            raise ValueError(f"Frame batch contains an invalid frame {index + 1}.")
+        with Image.open(BytesIO(raw[offset:end])) as image:
+            frames.append(image.convert("RGB"))
+        offset = end
+
+    if offset != len(raw):
+        raise ValueError("Frame batch contains unexpected trailing data.")
+
+    return frames, (perf_counter() - decode_started) * 1000
 
 
 @app.api(name="receive_frame", description="Receive one camera or video frame for action analysis.")
