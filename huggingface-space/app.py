@@ -167,17 +167,31 @@ def receive_yolo_only_batch(batch: dict) -> dict:
 
     frames, decode_ms = load_frame_batch(batch)
     inference_started = perf_counter()
-    result = None
+    results = []
 
+    # Preserve frame order so YOLO tracking IDs remain temporally consistent.
     for frame in frames:
-        result = process_yolo_only_frame(np.asarray(frame, dtype=np.uint8))
+        results.append(
+            process_yolo_only_frame(np.asarray(frame, dtype=np.uint8))
+        )
 
     inference_ms = (perf_counter() - inference_started) * 1000
     last_frame = frames[-1]
+    last_result = results[-1] if results else {}
+    returned_frames = [
+        {
+            "annotated_frame": item.get("annotated_frame"),
+            "people": item.get("people", []),
+            "fps": item.get("fps", 0.0),
+        }
+        for item in results
+    ]
     return {
         "status": "ok",
+        "frames": returned_frames,
         "batch_timing": {
             "frame_count": len(frames),
+            "returned_frame_count": len(returned_frames),
             "decode_ms": round(decode_ms, 2),
             "inference_ms": round(inference_ms, 2),
             "inference_ms_per_frame": round(inference_ms / len(frames), 2),
@@ -185,7 +199,11 @@ def receive_yolo_only_batch(batch: dict) -> dict:
         "width": last_frame.width,
         "height": last_frame.height,
         "received_at": datetime.now(timezone.utc).isoformat(),
-        **(result or {}),
+        "people": last_result.get("people", []),
+        "fps": last_result.get("fps", 0.0),
+        "model_connected": True,
+        "modelStatus": last_result.get("modelStatus", "YOLO Pose only"),
+        "message": "YOLO-only batch: all processed frames are returned together.",
     }
 
 
