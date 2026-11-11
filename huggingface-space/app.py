@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -179,11 +180,13 @@ def push_yolo_frame(stream_id: str, frame_id: int, frame: dict) -> dict:
 @app.api(
     name="run_yolo_stream",
     description="Run one persistent YOLO predict(stream=True) consumer and stream results back.",
+    concurrency_limit=1,
+    concurrency_id="yolo-continuous-inference",
     time_limit=120,
     stream_every=0.03,
 )
 @gpu(duration=120)
-def run_yolo_stream(stream_id: str):
+def run_yolo_stream(stream_id: str) -> Generator[dict, None, None]:
     yield from process_yolo_stream(stream_id)
 
 
