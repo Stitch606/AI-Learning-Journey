@@ -88,6 +88,7 @@ class StreamingInference:
             raise ValueError("Expected an RGB frame with shape [height, width, 3]")
 
         height, width = frame.shape[:2]
+        bgr_frame = np.ascontiguousarray(frame[:, :, ::-1])
         results = self.yolo.track(
             bgr_frame,
             persist=True,
