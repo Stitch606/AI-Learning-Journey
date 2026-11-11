@@ -14,6 +14,7 @@ from PIL import Image
 
 from gpu import gpu, gpu_ready
 from process.streaming_inference import process_stream_frame, reset_streaming_state
+from process.yolo_only import process_yolo_only_frame, reset_yolo_only_state
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -156,6 +157,43 @@ def receive_batch(batch: dict) -> dict:
         "received_at": datetime.now(timezone.utc).isoformat(),
         **(result or {}),
     }
+
+
+@app.api(name="receive_yolo_only_batch", description="YOLO-only isolation test; bypasses StreamManager and ST-GCN++.")
+@gpu
+def receive_yolo_only_batch(batch: dict) -> dict:
+    if batch is None:
+        return {"status": "error", "message": "No frame batch received."}
+
+    frames, decode_ms = load_frame_batch(batch)
+    inference_started = perf_counter()
+    result = None
+
+    for frame in frames:
+        result = process_yolo_only_frame(np.asarray(frame, dtype=np.uint8))
+
+    inference_ms = (perf_counter() - inference_started) * 1000
+    last_frame = frames[-1]
+    return {
+        "status": "ok",
+        "batch_timing": {
+            "frame_count": len(frames),
+            "decode_ms": round(decode_ms, 2),
+            "inference_ms": round(inference_ms, 2),
+            "inference_ms_per_frame": round(inference_ms / len(frames), 2),
+        },
+        "width": last_frame.width,
+        "height": last_frame.height,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        **(result or {}),
+    }
+
+
+@app.api(name="reset_yolo_only", description="Reset YOLO-only tracking state.")
+@gpu
+def reset_yolo_only() -> dict:
+    reset_yolo_only_state()
+    return {"status": "ok", "message": "YOLO-only tracker reset."}
 
 
 @app.api(name="reset_stream", description="Reset person tracking and temporal buffers.")
