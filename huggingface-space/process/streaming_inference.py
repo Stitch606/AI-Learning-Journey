@@ -164,9 +164,6 @@ class StreamingInference:
                 "confidence": prediction["confidence"] if prediction else 0.0,
             })
 
-        elapsed = perf_counter() - started
-        self.last_fps = 1.0 / elapsed if elapsed > 0 else 0.0
-
         annotated_frame = None
         if result is not None:
             plotted_frame = result.plot(
@@ -183,6 +180,9 @@ class StreamingInference:
             if encoded_ok:
                 image_base64 = base64.b64encode(encoded_image).decode("ascii")
                 annotated_frame = f"data:image/jpeg;base64,{image_base64}"
+
+        elapsed = perf_counter() - started
+        self.last_fps = 1.0 / elapsed if elapsed > 0 else 0.0
 
         return {
             "people": people,
