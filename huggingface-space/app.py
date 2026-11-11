@@ -14,7 +14,7 @@ from PIL import Image
 
 from gpu import gpu, gpu_ready
 from process.streaming_inference import process_stream_frame, reset_streaming_state
-from process.yolo_only import process_yolo_only_frame, reset_yolo_only_state
+from process.yolo_only import process_yolo_only_batch, reset_yolo_only_state
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -159,7 +159,7 @@ def receive_batch(batch: dict) -> dict:
     }
 
 
-@app.api(name="receive_yolo_only_batch", description="YOLO-only isolation test; bypasses StreamManager and ST-GCN++.")
+@app.api(name="receive_yolo_only_batch", description="Run one YOLO Pose prediction call over up to 30 frames; tracking disabled.")
 @gpu
 def receive_yolo_only_batch(batch: dict) -> dict:
     if batch is None:
@@ -167,14 +167,7 @@ def receive_yolo_only_batch(batch: dict) -> dict:
 
     frames, decode_ms = load_frame_batch(batch)
     inference_started = perf_counter()
-    results = []
-
-    # Preserve frame order so YOLO tracking IDs remain temporally consistent.
-    for frame in frames:
-        results.append(
-            process_yolo_only_frame(np.asarray(frame, dtype=np.uint8))
-        )
-
+    results = process_yolo_only_batch([np.asarray(frame, dtype=np.uint8) for frame in frames])
     inference_ms = (perf_counter() - inference_started) * 1000
     last_frame = frames[-1]
     last_result = results[-1] if results else {}
@@ -202,12 +195,11 @@ def receive_yolo_only_batch(batch: dict) -> dict:
         "people": last_result.get("people", []),
         "fps": last_result.get("fps", 0.0),
         "model_connected": True,
-        "modelStatus": last_result.get("modelStatus", "YOLO Pose only"),
-        "message": "YOLO-only batch: all processed frames are returned together.",
+        "modelStatus": "YOLO Pose batch detection · tracking disabled",
+        "message": "YOLO processed the complete frame batch in one predict call.",
     }
 
-
-@app.api(name="reset_yolo_only", description="Reset YOLO-only tracking state.")
+@app.api(name="reset_yolo_only", description="Reset YOLO-only model state.")
 @gpu
 def reset_yolo_only() -> dict:
     reset_yolo_only_state()
