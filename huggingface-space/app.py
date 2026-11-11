@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from time import perf_counter
 from pathlib import Path
 
 import gradio as gr
@@ -37,8 +38,8 @@ async def health():
 
 
 def process_frame(frame: Image.Image) -> dict:
-    """Convert a Gradio PIL frame to RGB NumPy and run persistent inference."""
-    frame_np = np.asarray(frame.convert("RGB"), dtype=np.uint8)
+    """Run inference on an already-normalized RGB PIL frame."""
+    frame_np = np.asarray(frame, dtype=np.uint8)
     return process_stream_frame(frame_np)
 
 
@@ -65,10 +66,18 @@ def receive_frame(frame: dict) -> dict:
     if frame is None:
         return {"status": "error", "message": "No frame received."}
 
+    decode_started = perf_counter()
     rgb_frame = load_frame(frame)
+    decode_ms = (perf_counter() - decode_started) * 1000
+    inference_started = perf_counter()
     result = process_frame(rgb_frame)
+    inference_ms = (perf_counter() - inference_started) * 1000
     return {
         "status": "ok",
+        "transport_timing": {
+            "decode_ms": round(decode_ms, 2),
+            "inference_ms": round(inference_ms, 2),
+        },
         "width": rgb_frame.width,
         "height": rgb_frame.height,
         "received_at": datetime.now(timezone.utc).isoformat(),
