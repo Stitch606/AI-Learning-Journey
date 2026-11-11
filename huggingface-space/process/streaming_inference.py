@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
+
+import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
@@ -20,6 +23,15 @@ DEFAULT_STGCN_CHECKPOINT = (
     WEIGHTS_DIR / "stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth"
 )
 MAX_PERSONS = 10
+KEYPOINT_CONFIDENCE = 0.25
+
+# COCO-17 skeleton connections (zero-based keypoint indices).
+SKELETON = (
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12), (11, 13), (13, 15),
+    (12, 14), (14, 16), (0, 1), (0, 2), (1, 3),
+    (2, 4), (0, 5), (0, 6),
+)
 
 
 def load_models(
@@ -70,6 +82,118 @@ class StreamingInference:
         self.manager.reset()
         self.predictions.clear()
         self.last_frame_at = None
+
+    def _render_frame(self, bgr_frame, result, detected_ids):
+        """Draw tracked boxes, COCO-17 pose skeletons, IDs, and action labels."""
+        canvas = bgr_frame.copy()
+        if result is None or result.boxes is None:
+            return canvas
+
+        boxes = result.boxes.xyxy
+        if boxes is None or len(boxes) == 0:
+            return canvas
+
+        boxes = boxes.detach().cpu().numpy()
+        keypoints = None
+        if result.keypoints is not None and result.keypoints.data is not None:
+            keypoints = result.keypoints.data.detach().cpu().numpy()
+
+        ids = []
+        if result.boxes.id is not None:
+            ids = result.boxes.id.detach().cpu().numpy().astype(np.int64).tolist()
+        else:
+            ids = [None] * len(boxes)
+
+        height, width = canvas.shape[:2]
+        line_width = max(2, round(min(width, height) / 360))
+        radius = max(3, line_width + 1)
+        palette = (
+            (80, 220, 120),
+            (255, 170, 60),
+            (220, 100, 240),
+            (60, 210, 240),
+            (240, 110, 90),
+        )
+
+        for index, box in enumerate(boxes):
+            track_id = ids[index] if index < len(ids) else None
+            color = palette[(int(track_id) if track_id is not None else index) % len(palette)]
+            x1, y1, x2, y2 = np.rint(box).astype(int)
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(width - 1, x2), min(height - 1, y2)
+
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, line_width)
+
+            action = "Person"
+            if track_id is not None:
+                prediction = self.predictions.get(int(track_id))
+                action = prediction["action"] if prediction else "Collecting frames"
+                label = f"ID {int(track_id)} | {action}"
+            else:
+                label = action
+
+            font_scale = max(0.45, min(width, height) / 1000)
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, line_width
+            )
+            label_top = max(0, y1 - text_height - baseline - 8)
+            cv2.rectangle(
+                canvas,
+                (x1, label_top),
+                (min(width - 1, x1 + text_width + 8), y1),
+                color,
+                -1,
+            )
+            cv2.putText(
+                canvas,
+                label,
+                (x1 + 4, max(text_height, y1 - baseline - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (20, 24, 30),
+                line_width,
+                cv2.LINE_AA,
+            )
+
+            if keypoints is None or index >= len(keypoints):
+                continue
+
+            person_points = keypoints[index]
+            visible = {}
+            for point_index, point in enumerate(person_points):
+                px, py = int(round(float(point[0]))), int(round(float(point[1])))
+                confidence = float(point[2]) if len(point) > 2 else 1.0
+                if confidence >= KEYPOINT_CONFIDENCE and 0 <= px < width and 0 <= py < height:
+                    visible[point_index] = (px, py)
+
+            for start, end in SKELETON:
+                if start in visible and end in visible:
+                    cv2.line(
+                        canvas,
+                        visible[start],
+                        visible[end],
+                        color,
+                        line_width,
+                        cv2.LINE_AA,
+                    )
+
+            for point in visible.values():
+                cv2.circle(canvas, point, radius, color, -1, cv2.LINE_AA)
+                cv2.circle(canvas, point, max(1, radius // 2), (245, 245, 245), -1, cv2.LINE_AA)
+
+        return canvas
+
+    @staticmethod
+    def _encode_annotated_frame(bgr_frame):
+        success, encoded = cv2.imencode(
+            ".jpg",
+            bgr_frame,
+            [cv2.IMWRITE_JPEG_QUALITY, 78],
+        )
+        if not success:
+            return None
+        image_data = base64.b64encode(encoded.tobytes()).decode("ascii")
+        return "data:image/jpeg;base64," + image_data
 
     def process_frame(self, rgb_frame):
         started = perf_counter()
@@ -161,8 +285,8 @@ class StreamingInference:
                 "confidence": prediction["confidence"] if prediction else 0.0,
             })
 
-        # Rendering and annotated-image encoding are disabled for this performance test.
-        annotated_frame = None
+        rendered_frame = self._render_frame(bgr_frame, result, detected)
+        annotated_frame = self._encode_annotated_frame(rendered_frame)
 
         elapsed = perf_counter() - started
         self.last_fps = 1.0 / elapsed if elapsed > 0 else 0.0
