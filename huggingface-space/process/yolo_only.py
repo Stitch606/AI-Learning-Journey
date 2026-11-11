@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
-from threading import Lock
+from queue import Empty, Queue
+from threading import Event, Lock
 from time import perf_counter
+from uuid import uuid4
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from ultralytics.data.loaders import LoadPilAndNumpy, SourceTypes
 
 
 DEFAULT_YOLO_MODEL = "yolo26m-pose.pt"
@@ -19,14 +22,59 @@ SKELETON = (
 )
 
 
+class QueueFrameLoader(LoadPilAndNumpy):
+    """A persistent Ultralytics source fed by frames arriving from Gradio."""
+
+    def __init__(self, frames: Queue, stopped: Event):
+        self.frames = frames
+        self.stopped = stopped
+        self.paths = []
+        self.im0 = []
+        self.mode = "stream"
+        self.bs = 1
+        self.count = 0
+        self.current_frame_id = -1
+        self.source_type = SourceTypes(
+            stream=True, screenshot=False, from_img=False, tensor=False
+        )
+
+    def __iter__(self):
+        return self
+
+    def __len__(self):
+        return 1
+
+    def __next__(self):
+        while not self.stopped.is_set():
+            try:
+                item = self.frames.get(timeout=0.25)
+            except Empty:
+                continue
+
+            if item is None:
+                raise StopIteration
+
+            frame_id, rgb_frame = item
+            frame = np.asarray(rgb_frame, dtype=np.uint8)
+            if frame.ndim != 3 or frame.shape[2] != 3:
+                continue
+
+            self.current_frame_id = int(frame_id)
+            bgr = np.ascontiguousarray(frame[:, :, ::-1])
+            self.paths = [f"browser-frame-{self.current_frame_id}.jpg"]
+            self.im0 = [bgr]
+            self.bs = 1
+            self.count += 1
+            return self.paths, self.im0, [""]
+
+        raise StopIteration
+
+
 class YOLOOnlyInference:
-    """YOLO Pose batch detection and drawing, with no tracking or action model."""
+    """YOLO Pose inference over one persistent, queue-fed input stream."""
 
     def __init__(self, model_name=DEFAULT_YOLO_MODEL):
         self.model = YOLO(model_name)
-
-    def reset(self):
-        return None
 
     @staticmethod
     def _render(frame, result):
@@ -42,7 +90,6 @@ class YOLOOnlyInference:
         keypoints = None
         if result.keypoints is not None and result.keypoints.data is not None:
             keypoints = result.keypoints.data.detach().cpu().numpy()
-
 
         height, width = canvas.shape[:2]
         thickness = max(2, round(min(width, height) / 360))
@@ -111,63 +158,85 @@ class YOLOOnlyInference:
         payload = base64.b64encode(encoded.tobytes()).decode("ascii")
         return "data:image/jpeg;base64," + payload
 
-    def process_batch(self, rgb_frames):
-        if not rgb_frames:
-            return []
+    def process_stream(self, frames: Queue, stopped: Event):
+        loader = QueueFrameLoader(frames, stopped)
 
-        frames_bgr = []
-        for frame in rgb_frames:
-            frame = np.asarray(frame, dtype=np.uint8)
-            if frame.ndim != 3 or frame.shape[2] != 3:
-                raise ValueError("Expected RGB frames with shape [height, width, 3]")
-            frames_bgr.append(np.ascontiguousarray(frame[:, :, ::-1]))
-
-        started = perf_counter()
-        # One predict call with all images; no persistent tracker is involved.
-        batch_results = self.model.predict(
-            source=frames_bgr,
+        # One long-lived predict call consumes the incoming queue.
+        for result in self.model.predict(
+            source=loader,
+            stream=True,
             verbose=False,
-            batch=len(frames_bgr),
-        )
-        inference_ms = (perf_counter() - started) * 1000
-
-        output = []
-        for frame, result in zip(frames_bgr, batch_results):
+        ):
+            frame_id = loader.current_frame_id
+            frame = result.orig_img
             rendered, people = self._render(frame, result)
-            output.append({
+            yield {
+                "status": "ok",
+                "frame_id": frame_id,
                 "people": people,
                 "model_connected": True,
-                "modelStatus": "YOLO Pose batch detection · tracking disabled",
-                "message": "YOLO batch detection only; no tracking or action recognition.",
+                "modelStatus": "YOLO Pose · continuous stream",
+                "message": "Continuous YOLO stream is running.",
                 "frame_shape": list(frame.shape),
                 "frame_dtype": str(frame.dtype),
                 "annotated_frame": self._encode(rendered),
-            })
-
-        per_frame_ms = inference_ms / len(frames_bgr)
-        for item in output:
-            item["fps"] = 1000.0 / per_frame_ms if per_frame_ms > 0 else 0.0
-            item["yolo_only_timing"] = {
-                "batch_inference_ms": round(inference_ms, 2),
-                "batch_size": len(frames_bgr),
+                "fps": 0.0,
             }
-        return output
+
+
+class YOLOStreamSession:
+    def __init__(self):
+        self.stream_id = uuid4().hex
+        self.frames = Queue()
+        self.stopped = Event()
 
 
 _yolo_only = None
 _yolo_only_lock = Lock()
+_sessions = {}
+_sessions_lock = Lock()
 
 
-def process_yolo_only_batch(rgb_frames):
+def create_yolo_stream():
+    session = YOLOStreamSession()
+    with _sessions_lock:
+        _sessions[session.stream_id] = session
+    return session.stream_id
+
+
+def enqueue_yolo_frame(stream_id, frame_id, rgb_frame):
+    with _sessions_lock:
+        session = _sessions.get(stream_id)
+    if session is None or session.stopped.is_set():
+        raise ValueError("YOLO stream is not active.")
+    session.frames.put((int(frame_id), np.asarray(rgb_frame, dtype=np.uint8)))
+    return session.frames.qsize()
+
+
+def stop_yolo_stream(stream_id):
+    with _sessions_lock:
+        session = _sessions.get(stream_id)
+    if session is None:
+        return False
+    session.stopped.set()
+    session.frames.put(None)
+    return True
+
+
+def process_yolo_stream(stream_id):
     global _yolo_only
-    with _yolo_only_lock:
-        if _yolo_only is None:
-            _yolo_only = YOLOOnlyInference()
-        return _yolo_only.process_batch(rgb_frames)
+    with _sessions_lock:
+        session = _sessions.get(stream_id)
+    if session is None:
+        yield {"status": "error", "message": "YOLO stream session not found."}
+        return
 
-
-def reset_yolo_only_state():
-    global _yolo_only
-    with _yolo_only_lock:
-        if _yolo_only is not None:
-            _yolo_only.reset()
+    try:
+        with _yolo_only_lock:
+            if _yolo_only is None:
+                _yolo_only = YOLOOnlyInference()
+            yield from _yolo_only.process_stream(session.frames, session.stopped)
+    finally:
+        session.stopped.set()
+        with _sessions_lock:
+            _sessions.pop(stream_id, None)
