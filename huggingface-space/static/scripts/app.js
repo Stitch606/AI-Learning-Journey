@@ -57,7 +57,7 @@ async function sendFrameBatch(blobs,generation){
     const packed=await packFrameBatch(blobs);
     const bridge=await connectBridge();
     const file=new File([packed],"frames.hab",{type:"application/octet-stream"});
-    const result=await bridge.predict("/receive_batch",{batch:file});
+    const result=await bridge.predict("/receive_yolo_only_batch",{batch:file});
     if(generation!==streamGeneration)return;
     const payload=Array.isArray(result.data)?result.data[0]:result.data;
     if(payload&&typeof payload==="object"){
