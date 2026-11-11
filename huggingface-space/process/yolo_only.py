@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from multiprocessing import Event, Queue
+from pathlib import Path
 from queue import Empty
 from threading import Lock
 from time import perf_counter
@@ -14,6 +15,7 @@ from ultralytics.data.loaders import LoadPilAndNumpy, SourceTypes
 
 
 DEFAULT_YOLO_MODEL = "yolo26m-pose.pt"
+IMAGE_SIZE = 640
 KEYPOINT_CONFIDENCE = 0.25
 SKELETON = (
     (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
@@ -72,10 +74,32 @@ class QueueFrameLoader(LoadPilAndNumpy):
 
 
 class YOLOOnlyInference:
-    """YOLO Pose inference over one persistent, queue-fed input stream."""
+    """YOLO Pose inference over one persistent, queue-fed TensorRT input stream."""
 
     def __init__(self, model_name=DEFAULT_YOLO_MODEL):
-        self.model = YOLO(model_name)
+        pytorch_model = YOLO(model_name)
+        checkpoint_path = Path(pytorch_model.ckpt_path)
+        engine_path = checkpoint_path.with_suffix(".engine")
+
+        if engine_path.is_file():
+            try:
+                self.model = YOLO(str(engine_path))
+                print(f"[YOLO] Loaded cached TensorRT engine: {engine_path}")
+                return
+            except Exception as error:
+                print(f"[YOLO] Cached engine could not be loaded; rebuilding it: {error}")
+                engine_path.unlink(missing_ok=True)
+
+        print("[YOLO] Building TensorRT FP16 engine...")
+        exported_path = pytorch_model.export(
+            format="engine",
+            quantize=16,
+            imgsz=IMAGE_SIZE,
+            batch=1,
+            verbose=False,
+        )
+        self.model = YOLO(str(exported_path))
+        print(f"[YOLO] TensorRT FP16 engine ready: {exported_path}")
 
     @staticmethod
     def _render(frame, result):
@@ -161,9 +185,8 @@ class YOLOOnlyInference:
 
     def process_stream(self, frames: Queue, stopped: Event):
         loader = QueueFrameLoader(frames, stopped)
-
-        # One long-lived predict call consumes the incoming queue.
         previous_result_at = perf_counter()
+
         for result in self.model.predict(
             source=loader,
             stream=True,
@@ -180,11 +203,12 @@ class YOLOOnlyInference:
                 "frame_id": frame_id,
                 "people": people,
                 "model_connected": True,
-                "modelStatus": "YOLO Pose · continuous stream",
-                "message": "Continuous YOLO stream is running.",
+                "modelStatus": "YOLO Pose · TensorRT FP16",
+                "message": "TensorRT FP16 YOLO stream is running.",
                 "frame_shape": list(frame.shape),
                 "frame_dtype": str(frame.dtype),
                 "annotated_frame": self._encode(rendered),
+                "inference_ms": round(elapsed * 1000, 2),
                 "fps": (1.0 / elapsed) if elapsed > 0 else 0.0,
             }
 
