@@ -220,7 +220,7 @@ def enqueue_yolo_frame(stream_id, frame_id, rgb_frame):
 
 def stop_yolo_stream(stream_id):
     with _sessions_lock:
-        session = _sessions.get(stream_id)
+        session = _sessions.pop(stream_id, None)
     if session is None:
         return False
     session.stopped.set()
