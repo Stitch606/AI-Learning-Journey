@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
-from queue import Empty, Queue
-from threading import Event, Lock
+from multiprocessing import Event, Queue
+from queue import Empty
+from threading import Lock
 from time import perf_counter
 from uuid import uuid4
 
@@ -214,7 +215,7 @@ def enqueue_yolo_frame(stream_id, frame_id, rgb_frame):
     if session is None or session.stopped.is_set():
         raise ValueError("YOLO stream is not active.")
     session.frames.put((int(frame_id), np.asarray(rgb_frame, dtype=np.uint8)))
-    return session.frames.qsize()
+    return True
 
 
 def stop_yolo_stream(stream_id):
