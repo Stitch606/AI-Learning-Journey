@@ -20,20 +20,13 @@ SKELETON = (
 
 
 class YOLOOnlyInference:
-    """YOLO Pose tracking and drawing, with no StreamManager or action model."""
+    """YOLO Pose batch detection and drawing, with no tracking or action model."""
 
     def __init__(self, model_name=DEFAULT_YOLO_MODEL):
         self.model = YOLO(model_name)
 
     def reset(self):
-        predictor = getattr(self.model, "predictor", None)
-        if predictor is not None:
-            tracker = getattr(predictor, "trackers", None)
-            if tracker:
-                for item in tracker:
-                    reset = getattr(item, "reset", None)
-                    if callable(reset):
-                        reset()
+        return None
 
     @staticmethod
     def _render(frame, result):
@@ -50,10 +43,6 @@ class YOLOOnlyInference:
         if result.keypoints is not None and result.keypoints.data is not None:
             keypoints = result.keypoints.data.detach().cpu().numpy()
 
-        if result.boxes.id is not None:
-            ids = result.boxes.id.detach().cpu().numpy().astype(np.int64).tolist()
-        else:
-            ids = [None] * len(boxes)
 
         height, width = canvas.shape[:2]
         thickness = max(2, round(min(width, height) / 360))
@@ -65,14 +54,13 @@ class YOLOOnlyInference:
         people = []
 
         for index, box in enumerate(boxes):
-            track_id = ids[index] if index < len(ids) else None
-            color = palette[(int(track_id) if track_id is not None else index) % len(palette)]
+            color = palette[index % len(palette)]
             x1, y1, x2, y2 = np.rint(box).astype(int)
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(width - 1, x2), min(height - 1, y2)
 
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thickness)
-            label = f"ID {track_id}" if track_id is not None else "Person"
+            label = f"Person {index + 1}"
             font_scale = max(0.45, min(width, height) / 1000)
             (text_width, text_height), baseline = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
@@ -105,8 +93,8 @@ class YOLOOnlyInference:
                     cv2.circle(canvas, point, max(1, radius // 2), (245, 245, 245), -1, cv2.LINE_AA)
 
             people.append({
-                "id": int(track_id) if track_id is not None else index + 1,
-                "person": f"Person {track_id}" if track_id is not None else f"Person {index + 1}",
+                "id": index + 1,
+                "person": f"Person {index + 1}",
                 "action": "YOLO detection only",
                 "confidence": 0.0,
             })
@@ -123,42 +111,59 @@ class YOLOOnlyInference:
         payload = base64.b64encode(encoded.tobytes()).decode("ascii")
         return "data:image/jpeg;base64," + payload
 
-    def process_frame(self, rgb_frame):
+    def process_batch(self, rgb_frames):
+        if not rgb_frames:
+            return []
+
+        frames_bgr = []
+        for frame in rgb_frames:
+            frame = np.asarray(frame, dtype=np.uint8)
+            if frame.ndim != 3 or frame.shape[2] != 3:
+                raise ValueError("Expected RGB frames with shape [height, width, 3]")
+            frames_bgr.append(np.ascontiguousarray(frame[:, :, ::-1]))
+
         started = perf_counter()
-        frame = np.asarray(rgb_frame, dtype=np.uint8)
-        if frame.ndim != 3 or frame.shape[2] != 3:
-            raise ValueError("Expected an RGB frame with shape [height, width, 3]")
+        # One predict call with all images; no persistent tracker is involved.
+        batch_results = self.model.predict(
+            source=frames_bgr,
+            verbose=False,
+            batch=len(frames_bgr),
+        )
+        inference_ms = (perf_counter() - started) * 1000
 
-        bgr = np.ascontiguousarray(frame[:, :, ::-1])
-        results = self.model.track(bgr, persist=True, verbose=False)
-        result = results[0] if results else None
-        rendered, people = self._render(bgr, result)
-        annotated_frame = self._encode(rendered)
+        output = []
+        for frame, result in zip(frames_bgr, batch_results):
+            rendered, people = self._render(frame, result)
+            output.append({
+                "people": people,
+                "model_connected": True,
+                "modelStatus": "YOLO Pose batch detection · tracking disabled",
+                "message": "YOLO batch detection only; no tracking or action recognition.",
+                "frame_shape": list(frame.shape),
+                "frame_dtype": str(frame.dtype),
+                "annotated_frame": self._encode(rendered),
+            })
 
-        elapsed_ms = (perf_counter() - started) * 1000
-        return {
-            "people": people,
-            "fps": 1000.0 / elapsed_ms if elapsed_ms > 0 else 0.0,
-            "model_connected": True,
-            "modelStatus": "YOLO Pose only · StreamManager and ST-GCN++ bypassed",
-            "message": "YOLO-only isolation test: no action recognition is running.",
-            "frame_shape": list(frame.shape),
-            "frame_dtype": str(frame.dtype),
-            "annotated_frame": annotated_frame,
-            "yolo_only_timing": {"process_ms": round(elapsed_ms, 2)},
-        }
+        per_frame_ms = inference_ms / len(frames_bgr)
+        for item in output:
+            item["fps"] = 1000.0 / per_frame_ms if per_frame_ms > 0 else 0.0
+            item["yolo_only_timing"] = {
+                "batch_inference_ms": round(inference_ms, 2),
+                "batch_size": len(frames_bgr),
+            }
+        return output
 
 
 _yolo_only = None
 _yolo_only_lock = Lock()
 
 
-def process_yolo_only_frame(rgb_frame):
+def process_yolo_only_batch(rgb_frames):
     global _yolo_only
     with _yolo_only_lock:
         if _yolo_only is None:
             _yolo_only = YOLOOnlyInference()
-        return _yolo_only.process_frame(rgb_frame)
+        return _yolo_only.process_batch(rgb_frames)
 
 
 def reset_yolo_only_state():
