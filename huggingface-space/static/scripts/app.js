@@ -15,9 +15,75 @@ function showMedia(){startRuntime();$("#videoEmpty").hidden=true;$("#liveBadge")
 render();showEmpty();
 window.ActionUI={getState:()=>({...state,cameraStream:null,videoUrl:null,bridge:null}),setState(payload={}){const overlay=$("#inferenceOverlay");if(typeof payload.annotated_frame==="string"){overlay.src=payload.annotated_frame;overlay.hidden=false;}else{overlay.hidden=true;overlay.removeAttribute("src");}if(typeof payload.fps==="number"){$("#fpsValue").textContent=payload.fps.toFixed(1);$("#statFps").textContent=payload.fps.toFixed(1);}if(Array.isArray(payload.people)){state.people=payload.people.map((p,i)=>({id:p.id??i+1,person:p.person??"Person "+(i+1),action:p.action??"Unknown",confidence:Number(p.confidence??0),time:p.time??new Date().toLocaleTimeString("en-GB"),color:p.color??["green","blue","red","purple","cyan"][i%5]}));render();}if(typeof payload.running==="boolean"){state.running=payload.running;$("#liveBadge").hidden=!payload.running;}if(typeof payload.modelStatus==="string")if($("#engineStatusText"))$("#engineStatusText").textContent=payload.modelStatus;if(Array.isArray(payload.logs))$("#logList").replaceChildren(...payload.logs.map(x=>{const p=document.createElement("p");p.textContent=x.text??String(x);return p;}));if(payload.statistics)for(const [k,v] of Object.entries(payload.statistics)){const el=document.getElementById(k);if(el)el.textContent=v;}},setTheme,addLog:log};
 async function connectBridge(){if(state.bridge)return state.bridge;if($("#engineStatusText"))$("#engineStatusText").textContent="Connecting to Gradio…";try{const {Client}=await import("https://esm.sh/@gradio/client@2.7.2");state.bridge=await Client.connect(location.origin);state.bridgeConnected=true;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge connected · awaiting model inference";log("Connected to Gradio data bridge","green");return state.bridge;}catch(e){state.bridgeConnected=false;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge offline · retry when ready";log("Gradio connection failed: "+e.message,"red");throw e;}}
-async function sendCurrentFrame(){const video=$("#cameraVideo");if(state.bridgeBusy||state.paused||!state.running||video.readyState<2||video.videoWidth===0)return;state.bridgeBusy=true;try{const canvas=document.createElement("canvas");const scale=Math.min(1,640/video.videoWidth);canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);canvas.getContext("2d").drawImage(video,0,0,canvas.width,canvas.height);const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.78));if(!blob)return;const bridge=await connectBridge();const file=new File([blob],"frame.jpg",{type:"image/jpeg"});const result=await bridge.predict("/receive_frame",{frame:file});const payload=Array.isArray(result.data)?result.data[0]:result.data;if(payload&&typeof payload==="object"){if(Array.isArray(payload.people)||typeof payload.fps==="number")window.ActionUI.setState(payload);if(payload.message&&state.lastFrameAt===0)log(payload.message);}state.lastFrameAt=Date.now();}catch(e){if(state.bridgeConnected){state.bridge=null;state.bridgeConnected=false;}log("Frame transfer error: "+e.message,"red");}finally{state.bridgeBusy=false;}}
-function startFrameTransfer(){stopFrameTransfer();state.bridgeTimer=setInterval(sendCurrentFrame,300);sendCurrentFrame();}
-function stopFrameTransfer(){if(state.bridgeTimer)clearInterval(state.bridgeTimer);state.bridgeTimer=null;state.lastFrameAt=0;}
+const FRAME_INTERVAL_MS=300;
+let frameCanvas=null,frameContext=null,transferSamples=[],transferCount=0,lastTransferStarted=0;
+function getFrameCanvas(video){
+  if(!frameCanvas){frameCanvas=document.createElement("canvas");frameContext=frameCanvas.getContext("2d",{alpha:false});}
+  const scale=Math.min(1,640/video.videoWidth);
+  const width=Math.max(1,Math.round(video.videoWidth*scale));
+  const height=Math.max(1,Math.round(video.videoHeight*scale));
+  if(frameCanvas.width!==width||frameCanvas.height!==height){frameCanvas.width=width;frameCanvas.height=height;}
+  return {canvas:frameCanvas,context:frameContext};
+}
+async function sendCurrentFrame(){
+  const video=$("#cameraVideo");
+  if(state.bridgeBusy||state.paused||!state.running||video.readyState<2||video.videoWidth===0)return;
+  state.bridgeBusy=true;
+  const started=performance.now();
+  let drawMs=0,encodeMs=0,roundTripMs=0,blobBytes=0;
+  try{
+    const {canvas,context}=getFrameCanvas(video);
+    let t=performance.now();
+    context.drawImage(video,0,0,canvas.width,canvas.height);
+    drawMs=performance.now()-t;
+    t=performance.now();
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error("JPEG encoding failed")),"image/jpeg",0.78));
+    encodeMs=performance.now()-t;
+    blobBytes=blob.size;
+    const bridge=await connectBridge();
+    const file=new File([blob],"frame.jpg",{type:"image/jpeg"});
+    t=performance.now();
+    const result=await bridge.predict("/receive_frame",{frame:file});
+    roundTripMs=performance.now()-t;
+    const payload=Array.isArray(result.data)?result.data[0]:result.data;
+    if(payload&&typeof payload==="object"){
+      if(Array.isArray(payload.people)||typeof payload.fps==="number")window.ActionUI.setState(payload);
+      if(payload.message&&state.lastFrameAt===0)log(payload.message);
+    }
+    state.lastFrameAt=Date.now();
+    transferSamples.push({draw_ms:+drawMs.toFixed(2),jpeg_ms:+encodeMs.toFixed(2),gradio_roundtrip_ms:+roundTripMs.toFixed(2),total_ms:+(performance.now()-started).toFixed(2),jpeg_kb:+(blobBytes/1024).toFixed(1),server_decode_ms:payload?.transport_timing?.decode_ms??null,server_inference_ms:payload?.transport_timing?.inference_ms??null});
+    if(transferSamples.length>10)transferSamples.shift();
+    transferCount++;
+    if(transferCount%10===0)console.table(transferSamples);
+  }catch(e){
+    if(state.bridgeConnected){state.bridge=null;state.bridgeConnected=false;}
+    log("Frame transfer error: "+e.message,"red");
+  }finally{state.bridgeBusy=false;}
+}
+function scheduleNextFrame(){
+  if(!state.running||state.paused||!state.bridgeTimer)return;
+  const elapsed=lastTransferStarted?performance.now()-lastTransferStarted:FRAME_INTERVAL_MS;
+  const delay=Math.max(0,FRAME_INTERVAL_MS-elapsed);
+  state.bridgeTimer=setTimeout(async()=>{
+    lastTransferStarted=performance.now();
+    await sendCurrentFrame();
+    scheduleNextFrame();
+  },delay);
+}
+function startFrameTransfer(){
+  stopFrameTransfer();
+  state.bridgeTimer=setTimeout(async()=>{
+    lastTransferStarted=performance.now();
+    await sendCurrentFrame();
+    scheduleNextFrame();
+  },0);
+}
+function stopFrameTransfer(){
+  if(state.bridgeTimer)clearTimeout(state.bridgeTimer);
+  state.bridgeTimer=null;
+  state.lastFrameAt=0;
+  lastTransferStarted=0;
+}
 async function camera(){if(!navigator.mediaDevices?.getUserMedia){log("Camera requires HTTPS or localhost","red");return;}try{if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:state.cameraFacing},audio:false});const v=$("#cameraVideo");v.srcObject=state.cameraStream;v.hidden=false;v.classList.remove("portrait-source");v.style.width="";v.style.height="";v.onloadedmetadata=null;await v.play();state.running=true;showMedia();log("Camera stream started","green");startFrameTransfer();}catch(e){log("Unable to open camera: "+e.name,"red");}}
 function stopMedia(){stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
 $$("[data-nav]").forEach(b=>b.addEventListener("click",()=>{state.page=b.dataset.nav;$$(".nav").forEach(n=>n.classList.toggle("active",n===b));$("#sidebar").classList.remove("open");if(state.cameraStream||state.videoUrl)stopMedia();showEmpty();}));
