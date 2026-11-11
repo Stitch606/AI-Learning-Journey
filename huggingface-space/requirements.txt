@@ -3,3 +3,6 @@ Pillow>=10.0
 opencv-python-headless>=4.9
 plotly>=5.20
 ultralytics>=8.4.0
+tensorrt>=10.13.0
+onnx>=1.16.0
+onnxslim>=0.1.71
