@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from time import perf_counter
+from io import BytesIO
 from pathlib import Path
+from struct import unpack_from
+from time import perf_counter
 
 import gradio as gr
 import numpy as np
@@ -15,6 +17,8 @@ from process.streaming_inference import process_stream_frame, reset_streaming_st
 
 
 BASE_DIR = Path(__file__).resolve().parent
+BATCH_MAGIC = b"HAB1"
+MAX_BATCH_FRAMES = 30
 
 # Gradio Server is the application server and API bridge.
 # The custom frontend is served as static files; inference stays in process/.
@@ -45,8 +49,7 @@ def process_frame(frame: Image.Image) -> dict:
 
 def load_frame(frame: dict | Image.Image) -> Image.Image:
     """
-    Gradio Server API receives uploaded files as FileData dictionaries.
-    Resolve the temporary file path and open it as a PIL image.
+    Resolve one Gradio FileData dictionary and decode it as RGB.
     """
     if isinstance(frame, Image.Image):
         return frame.convert("RGB")
@@ -58,6 +61,45 @@ def load_frame(frame: dict | Image.Image) -> Image.Image:
                 return image.convert("RGB")
 
     raise ValueError("The Gradio frame payload did not contain a readable image path.")
+
+
+def load_frame_batch(batch: dict) -> tuple[list[Image.Image], float]:
+    """
+    Decode the compact HAB1 container produced by the browser.
+    Layout: magic(4), frame_count(uint32 BE), repeated length(uint32 BE) + JPEG bytes.
+    """
+    if not isinstance(batch, dict) or not batch.get("path"):
+        raise ValueError("The frame batch payload did not contain a readable file path.")
+
+    raw = Path(batch["path"]).read_bytes()
+    if len(raw) < 8 or raw[:4] != BATCH_MAGIC:
+        raise ValueError("Invalid frame batch header.")
+
+    frame_count = unpack_from(">I", raw, 4)[0]
+    if frame_count < 1 or frame_count > MAX_BATCH_FRAMES:
+        raise ValueError(f"Frame batch must contain between 1 and {MAX_BATCH_FRAMES} frames.")
+
+    decode_started = perf_counter()
+    offset = 8
+    frames = []
+
+    for index in range(frame_count):
+        if offset + 4 > len(raw):
+            raise ValueError(f"Frame batch ended before frame {index + 1} length.")
+        frame_size = unpack_from(">I", raw, offset)[0]
+        offset += 4
+        end = offset + frame_size
+        if frame_size <= 0 or end > len(raw):
+            raise ValueError(f"Frame batch contains an invalid frame {index + 1}.")
+        with Image.open(BytesIO(raw[offset:end])) as image:
+            frames.append(image.convert("RGB"))
+        offset = end
+
+    if offset != len(raw):
+        raise ValueError("Frame batch contains unexpected trailing data.")
+
+    decode_ms = (perf_counter() - decode_started) * 1000
+    return frames, decode_ms
 
 
 @app.api(name="receive_frame", description="Receive one camera or video frame for action analysis.")
@@ -85,6 +127,37 @@ def receive_frame(frame: dict) -> dict:
     }
 
 
+@app.api(name="receive_batch", description="Receive up to 30 ordered frames in one request.")
+@gpu
+def receive_batch(batch: dict) -> dict:
+    if batch is None:
+        return {"status": "error", "message": "No frame batch received."}
+
+    frames, decode_ms = load_frame_batch(batch)
+    inference_started = perf_counter()
+    result = None
+
+    # Keep frames ordered: YOLO tracking and per-person temporal buffers are stateful.
+    for frame in frames:
+        result = process_frame(frame)
+
+    inference_ms = (perf_counter() - inference_started) * 1000
+    last_frame = frames[-1]
+    return {
+        "status": "ok",
+        "batch_timing": {
+            "frame_count": len(frames),
+            "decode_ms": round(decode_ms, 2),
+            "inference_ms": round(inference_ms, 2),
+            "inference_ms_per_frame": round(inference_ms / len(frames), 2),
+        },
+        "width": last_frame.width,
+        "height": last_frame.height,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        **(result or {}),
+    }
+
+
 @app.api(name="reset_stream", description="Reset person tracking and temporal buffers.")
 @gpu
 def reset_stream() -> dict:
@@ -97,7 +170,7 @@ def reset_stream() -> dict:
 def analyze_video(video_path: str) -> dict:
     return {
         "status": "model_not_connected",
-        "message": "Use the receive_frame endpoint to stream frames.",
+        "message": "Use the receive_batch endpoint to stream frames.",
         "received_video": bool(video_path),
     }
 
