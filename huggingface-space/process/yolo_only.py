@@ -93,7 +93,7 @@ class YOLOOnlyInference:
         print("[YOLO] Building TensorRT FP16 engine...")
         exported_path = pytorch_model.export(
             format="engine",
-            half=True,
+            quantize=16,
             imgsz=IMAGE_SIZE,
             batch=1,
             verbose=False,
