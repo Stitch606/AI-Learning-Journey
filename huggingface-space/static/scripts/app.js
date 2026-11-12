@@ -18,8 +18,8 @@ window.ActionUI={getState:()=>({...state,cameraStream:null,videoUrl:null,bridge:
 async function connectBridge(){if(state.bridge)return state.bridge;if($("#engineStatusText"))$("#engineStatusText").textContent="Connecting to Gradio…";try{const {Client}=await import("https://esm.sh/@gradio/client@2.7.2");state.bridge=await Client.connect(location.origin);state.bridgeConnected=true;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge connected · awaiting model inference";log("Connected to Gradio data bridge","green");return state.bridge;}catch(e){state.bridgeConnected=false;if($("#engineStatusText"))$("#engineStatusText").textContent="Bridge offline · retry when ready";log("Gradio connection failed: "+e.message,"red");throw e;}}
 const CAPTURE_INTERVAL_MS=33;
 let frameCanvas=null,frameContext=null,captureLoopTask=null;
-let streamGeneration=0,activeStreamId=null,streamJob=null,resolveStreamReady=null;
-let nextFrameId=0,outgoingFrames=[],sendingGenerations=new Set(),lastRenderedFrameId=-1;
+let streamGeneration=0,nextFrameId=0,lastRenderedFrameId=-1;
+let lastTransferErrorAt=0;
 
 function getFrameCanvas(video){
   if(!frameCanvas){frameCanvas=document.createElement("canvas");frameContext=frameCanvas.getContext("2d",{alpha:false});}
@@ -36,65 +36,32 @@ async function encodeCurrentFrame(){
   context.drawImage(video,0,0,canvas.width,canvas.height);
   return await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error("JPEG encoding failed")),"image/jpeg",0.78));
 }
-async function consumeYoloResults(job,generation){
-  try{
-    for await(const message of job){
-      if(generation!==streamGeneration)break;
-      if(message.type!=="data")continue;
-      const payload=Array.isArray(message.data)?message.data[0]:message.data;
-      if(!payload||typeof payload!=="object")continue;
-      if(payload.status==="ready"){
-        if(generation===streamGeneration&&resolveStreamReady){resolveStreamReady(true);resolveStreamReady=null;}
-        continue;
-      }
-      if(payload.status==="ok"){
-        if(Number(payload.frame_id)>lastRenderedFrameId){
-          lastRenderedFrameId=Number(payload.frame_id);
-          window.ActionUI.setState(payload);
-          state.lastFrameAt=Date.now();
-        }
-      }else if(payload.message){
-        log(payload.message,"red");
-      }
-    }
-  }catch(e){
-    if(generation===streamGeneration)log("YOLO result stream error: "+e.message,"red");
-  }
-  if(generation===streamGeneration&&resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
-  if(generation===streamGeneration&&state.running&&activeStreamId){
-    log("Refreshing the YOLO stream session","yellow");
-    await new Promise(resolve=>setTimeout(resolve,500));
-    if(generation===streamGeneration&&state.running)void startFrameTransfer();
-  }
-}
-async function flushOutgoingFrames(streamId,generation){
-  if(sendingGenerations.has(generation))return;
-  sendingGenerations.add(generation);
-  let currentItem=null;
+async function sendYoloFrame(blob,frameId,generation){
   try{
     const bridge=await connectBridge();
-    while(outgoingFrames.length&&generation===streamGeneration&&state.running){
-      currentItem=outgoingFrames.shift();
-      const file=new File([currentItem.blob],"frame-"+currentItem.id+".jpg",{type:"image/jpeg"});
-      await bridge.predict("/push_yolo_frame",{
-        stream_id:streamId,
-        frame_id:currentItem.id,
-        frame:file
-      });
-      currentItem=null;
+    if(generation!==streamGeneration||!state.running)return;
+    const file=new File([blob],"frame-"+frameId+".jpg",{type:"image/jpeg"});
+    const response=await bridge.predict("/receive_yolo_frame",{
+      frame_id:frameId,
+      frame:file
+    });
+    if(generation!==streamGeneration||!state.running)return;
+    const payload=Array.isArray(response.data)?response.data[0]:response.data;
+    if(payload?.status==="ok"&&Number(payload.frame_id)>lastRenderedFrameId){
+      lastRenderedFrameId=Number(payload.frame_id);
+      window.ActionUI.setState(payload);
+      state.lastFrameAt=Date.now();
+    }else if(payload?.message&&payload.status==="error"){
+      log(payload.message,"red");
     }
   }catch(e){
-    if(currentItem&&generation===streamGeneration)outgoingFrames.unshift(currentItem);
-    if(generation===streamGeneration)log("Frame transfer error: "+e.message,"red");
-    await new Promise(resolve=>setTimeout(resolve,250));
-  }finally{
-    sendingGenerations.delete(generation);
-    if(outgoingFrames.length&&generation===streamGeneration&&state.running){
-      void flushOutgoingFrames(streamId,generation);
+    if(generation===streamGeneration&&Date.now()-lastTransferErrorAt>3000){
+      lastTransferErrorAt=Date.now();
+      log("Frame transfer error: "+e.message,"red");
     }
   }
 }
-async function captureContinuously(streamId,generation){
+async function captureContinuously(generation){
   while(generation===streamGeneration&&state.running){
     const started=performance.now();
     if(!state.paused){
@@ -102,8 +69,7 @@ async function captureContinuously(streamId,generation){
         const blob=await encodeCurrentFrame();
         if(blob&&generation===streamGeneration){
           const frameId=++nextFrameId;
-          outgoingFrames.push({id:frameId,blob});
-          void flushOutgoingFrames(streamId,generation);
+          void sendYoloFrame(blob,frameId,generation);
         }
       }catch(e){
         if(generation===streamGeneration)log("Frame capture error: "+e.message,"red");
@@ -117,58 +83,26 @@ async function startFrameTransfer(){
   stopFrameTransfer();
   const generation=streamGeneration;
   try{
-    const bridge=await connectBridge();
-    const started=await bridge.predict("/start_yolo_stream",{});
-    const startPayload=Array.isArray(started.data)?started.data[0]:started.data;
-    if(!startPayload?.stream_id)throw new Error(startPayload?.message||"Could not create YOLO stream.");
-    if(generation!==streamGeneration){
-      await bridge.predict("/stop_yolo_stream",{stream_id:startPayload.stream_id}).catch(()=>{});
-      return;
-    }
-    activeStreamId=startPayload.stream_id;
+    await connectBridge();
+    if(generation!==streamGeneration||!state.running)return;
     nextFrameId=0;
     lastRenderedFrameId=-1;
-    outgoingFrames=[];
     state.bridgeBusy=true;
-    let readyResolve;
-    const readyPromise=new Promise(resolve=>{readyResolve=resolve;});
-    resolveStreamReady=readyResolve;
-    streamJob=bridge.submit("/run_yolo_stream",{stream_id:activeStreamId});
-    void consumeYoloResults(streamJob,generation);
-    const ready=await Promise.race([
-      readyPromise,
-      new Promise(resolve=>setTimeout(()=>resolve(false),15000))
-    ]);
-    if(resolveStreamReady===readyResolve)resolveStreamReady=null;
-    if(!ready)throw new Error("YOLO worker did not become ready.");
-    if(generation!==streamGeneration)return;
-    captureLoopTask=captureContinuously(activeStreamId,generation);
-    log("Continuous YOLO stream started","green");
+    captureLoopTask=captureContinuously(generation);
+    log("Continuous YOLO frame sending started","green");
   }catch(e){
     if(generation===streamGeneration){
       stopFrameTransfer();
-      log("Unable to start YOLO stream: "+e.message,"red");
+      log("Unable to start YOLO sending: "+e.message,"red");
     }
   }
 }
 function stopFrameTransfer(){
   streamGeneration++;
-  const oldStreamId=activeStreamId;
-  const oldJob=streamJob;
-  activeStreamId=null;
-  streamJob=null;
-  outgoingFrames=[];
-  if(resolveStreamReady){resolveStreamReady(false);resolveStreamReady=null;}
   captureLoopTask=null;
   state.bridgeBusy=false;
   state.bridgeTimer=null;
   state.lastFrameAt=0;
-  if(oldStreamId&&state.bridge){
-    const stopped=state.bridge.predict("/stop_yolo_stream",{stream_id:oldStreamId}).catch(()=>{});
-    if(oldJob)void stopped.finally(()=>oldJob.cancel());
-  }else if(oldJob){
-    oldJob.cancel();
-  }
 }
 async function camera(){if(!navigator.mediaDevices?.getUserMedia){log("Camera requires HTTPS or localhost","red");return;}try{if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:state.cameraFacing},audio:false});const v=$("#cameraVideo");v.srcObject=state.cameraStream;v.hidden=false;v.classList.remove("portrait-source");v.style.width="";v.style.height="";v.onloadedmetadata=null;await v.play();state.running=true;showMedia();log("Camera stream started","green");void startFrameTransfer();}catch(e){log("Unable to open camera: "+e.name,"red");}}
 function stopMedia(){stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
