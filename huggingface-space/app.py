@@ -15,12 +15,7 @@ from PIL import Image
 
 from gpu import gpu, gpu_ready
 from process.streaming_inference import process_stream_frame, reset_streaming_state
-from process.yolo_only import (
-    create_yolo_stream,
-    enqueue_yolo_frame,
-    process_yolo_stream,
-    stop_yolo_stream,
-)
+from process.yolo_only import process_yolo_frame
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -162,39 +157,19 @@ def receive_batch(batch: dict) -> dict:
 
 
 
-@app.api(name="start_yolo_stream", queue=False, description="Create a persistent YOLO input stream.")
-def start_yolo_stream() -> dict:
-    stream_id = create_yolo_stream()
-    return {"status": "ok", "stream_id": stream_id}
-
-
-@app.api(name="push_yolo_frame", queue=False, description="Append one frame to an active YOLO input stream.")
-def push_yolo_frame(stream_id: str, frame_id: int, frame: dict) -> dict:
+@app.api(name="receive_yolo_frame", queue=False, description="Run YOLO on one camera frame.")
+@gpu
+def receive_yolo_frame(frame_id: int, frame: dict) -> dict:
     if frame is None:
         return {"status": "error", "message": "No frame received."}
+
     rgb_frame = np.asarray(load_frame(frame), dtype=np.uint8)
-    queued = enqueue_yolo_frame(stream_id, frame_id, rgb_frame)
-    return {"status": "ok", "frame_id": frame_id, "queued_frames": queued}
+    return {
+        "status": "ok",
+        "frame_id": frame_id,
+        **process_yolo_frame(rgb_frame),
+    }
 
-
-@app.api(
-    name="run_yolo_stream",
-    description="Run one persistent YOLO predict(stream=True) consumer and stream results back.",
-    concurrency_limit=1,
-    concurrency_id="yolo-continuous-inference",
-    time_limit=120,
-    stream_every=0.03,
-)
-@gpu(duration=120)
-def run_yolo_stream(stream_id: str) -> Generator[dict, None, None]:
-    yield {"status": "ready", "stream_id": stream_id}
-    yield from process_yolo_stream(stream_id)
-
-
-@app.api(name="stop_yolo_stream", queue=False, description="Stop a persistent YOLO input stream.")
-def stop_yolo_stream_api(stream_id: str) -> dict:
-    stopped = stop_yolo_stream(stream_id)
-    return {"status": "ok" if stopped else "not_found", "stream_id": stream_id}
 
 @app.api(name="reset_stream", description="Reset person tracking and temporal buffers.")
 @gpu
