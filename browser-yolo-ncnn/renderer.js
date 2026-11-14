@@ -27,9 +27,14 @@ export class PoseRenderer {
     this.smoothed = new Map();
     this.smoothing = options.smoothing ?? 0.35;
     this.lastSource = { width: 0, height: 0 };
+    this.latestDetections = [];
+    this.sourceWidth = 0;
+    this.sourceHeight = 0;
+    this.running = true;
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(canvas);
     this.resize();
+    this.animationFrame = requestAnimationFrame(() => this.renderLoop());
   }
 
   resize() {
@@ -37,6 +42,10 @@ export class PoseRenderer {
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     const width = Math.max(1, Math.round(rect.width * dpr));
     const height = Math.max(1, Math.round(rect.height * dpr));
+
+    this.cssWidth = rect.width;
+    this.cssHeight = rect.height;
+    this.dpr = dpr;
 
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
@@ -83,16 +92,30 @@ export class PoseRenderer {
   }
 
   draw(detections = [], sourceWidth, sourceHeight) {
-    this.resize();
+    this.latestDetections = Array.isArray(detections) ? detections : [];
+    this.sourceWidth = sourceWidth || 0;
+    this.sourceHeight = sourceHeight || 0;
+  }
+
+  renderLoop() {
+    if (!this.running) return;
+    this.renderFrame();
+    this.animationFrame = requestAnimationFrame(() => this.renderLoop());
+  }
+
+  renderFrame() {
     const ctx = this.ctx;
     const canvasWidth = this.canvas.width;
     const canvasHeight = this.canvas.height;
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-    if (!sourceWidth || !sourceHeight || !Array.isArray(detections)) return;
+    const sourceWidth = this.sourceWidth;
+    const sourceHeight = this.sourceHeight;
+    const detections = this.latestDetections;
+    if (!sourceWidth || !sourceHeight) return;
 
     const scale = Math.min(canvasWidth / sourceWidth, canvasHeight / sourceHeight);
-    const dpr = canvasWidth / Math.max(1, this.canvas.getBoundingClientRect().width);
+    const dpr = this.dpr || 1;
     const offsetX = (canvasWidth - sourceWidth * scale) / 2;
     const offsetY = (canvasHeight - sourceHeight * scale) / 2;
 
@@ -190,8 +213,11 @@ export class PoseRenderer {
   }
 
   destroy() {
+    this.running = false;
+    cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.smoothed.clear();
+    this.latestDetections = [];
     this.clear();
   }
 }
