@@ -108,8 +108,8 @@ worker.addEventListener("message", event => {
     workerReady = true;
     cameraButton.disabled = false;
     setStatus(message.runtimeMode === "simd-threads"
-      ? `NCNN · SIMD · ${message.numThreads} CPU threads`
-      : "NCNN · SIMD · single thread", true);
+      ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
+      : "NCNN · SIMD · single thread · model ready", true);
     notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose an image.";
     return;
   }
