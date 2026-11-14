@@ -21,11 +21,80 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: \${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Export YOLO26n-Pose to NCNN FP16
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ultralytics
+          python browser-yolo-ncnn/tools/export_model.py
+          python browser-yolo-ncnn/wasm/inspect_model.py
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+          actions-cache-folder: "emsdk-cache"
+
+      - name: Build NCNN WebAssembly SIMD
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/Tencent/ncnn.git "$RUNNER_TEMP/ncnn"
+          emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install" \
+            -DNCNN_THREADS=OFF \
+            -DNCNN_OPENMP=OFF \
+            -DNCNN_SIMPLEOMP=OFF \
+            -DNCNN_SIMPLEOCV=ON \
+            -DNCNN_RUNTIME_CPU=OFF \
+            -DNCNN_SSE2=ON \
+            -DNCNN_AVX=OFF \
+            -DNCNN_AVX2=OFF \
+            -DNCNN_VULKAN=OFF \
+            -DNCNN_BUILD_TOOLS=OFF \
+            -DNCNN_BUILD_EXAMPLES=OFF \
+            -DNCNN_BUILD_BENCHMARK=OFF \
+            -DNCNN_BUILD_TESTS=OFF \
+            -DNCNN_BUILD_SHARED_LIBS=OFF
+          cmake --build "$RUNNER_TEMP/ncnn/build" --parallel 4
+          cmake --install "$RUNNER_TEMP/ncnn/build"
+
+      - name: Compile the browser inference bridge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p browser-yolo-ncnn/runtime
+          em++ browser-yolo-ncnn/wasm/pose_bridge.cpp \
+            -I"$RUNNER_TEMP/ncnn-install/include/ncnn" \
+            -L"$RUNNER_TEMP/ncnn-install/lib" \
+            -lncnn \
+            -O3 -msimd128 -DNDEBUG \
+            -s MODULARIZE=1 \
+            -s EXPORT_ES6=1 \
+            -s EXPORT_NAME=createNcnnModule \
+            -s ENVIRONMENT=worker \
+            -s FILESYSTEM=1 \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s INITIAL_MEMORY=268435456 \
+            -s MAXIMUM_MEMORY=1073741824 \
+            -s STACK_SIZE=8388608 \
+            -s EXPORTED_FUNCTIONS='["_malloc","_free","_init_model","_run_inference","_get_detection_count","_copy_detections"]' \
+            -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8"]' \
+            -o browser-yolo-ncnn/runtime/ncnn.js
+          test -s browser-yolo-ncnn/runtime/ncnn.js
+          test -s browser-yolo-ncnn/runtime/ncnn.wasm
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
