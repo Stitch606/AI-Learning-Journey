@@ -48,14 +48,15 @@ float value_at(const ncnn::Mat& output, int channel, int candidate,
 
 extern "C" {
 int init_model(const char* param_path, const char* bin_path,
-               const char* input_blob, const char* output_blob) {
+               const char* input_blob, const char* output_blob,
+               int num_threads) {
     if (!param_path || !bin_path || !input_blob || !output_blob) return -1;
     g_input_blob = input_blob;
     g_output_blob = output_blob;
 
     g_net.clear();
     g_net.opt.use_vulkan_compute = false;
-    g_net.opt.num_threads = 1;
+    g_net.opt.num_threads = std::max(1, num_threads);
     g_net.opt.use_fp16_storage = false;
     g_net.opt.use_fp16_packed = false;
     g_net.opt.use_fp16_arithmetic = false;
