@@ -66,6 +66,7 @@ async function startCamera() {
   try {
     stopCamera();
     selectedImage = null;
+    document.querySelector("#image-preview")?.remove();
     cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
