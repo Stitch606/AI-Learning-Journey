@@ -40,7 +40,7 @@ jobs:
           python browser-yolo-ncnn/wasm/inspect_model.py
 
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: emscripten-core/setup-emsdk@v15
         with:
           version: 6.0.12
           actions-cache-folder: "emsdk-cache"
