@@ -195,7 +195,7 @@ self.onmessage = async event => {
       const result = decodeResults(bitmap);
       self.postMessage({ type: "result", ...result });
     } catch (error) {
-      self.postMessage({ type: "error", message: error.message });
+      self.postMessage({ type: "frame-error", message: error.message });
     } finally {
       bitmap.close();
     }
