@@ -21,7 +21,8 @@ function allocateCString(value) {
   return pointer;
 }
 
-async function initialize() {
+async function initialize(forceSingleThread = false) {
+  self.postMessage({ type: "progress", status: "Loading model files", detail: "Downloading the NCNN model configuration and weights…" });
   const configResponse = await fetch("./model/model-config.json");
   if (!configResponse.ok) throw new Error("Model configuration was not found.");
   config = await configResponse.json();
@@ -39,7 +40,8 @@ async function initialize() {
     binResponse.arrayBuffer()
   ]);
 
-  const canUseThreads = self.crossOriginIsolated &&
+  self.postMessage({ type: "progress", status: "Loading NCNN runtime", detail: "Model files downloaded. Preparing the browser inference engine…" });
+  const canUseThreads = !forceSingleThread && self.crossOriginIsolated &&
     typeof SharedArrayBuffer !== "undefined";
   const runtimeUrl = canUseThreads
     ? "./runtime/ncnn-threaded.js"
@@ -52,6 +54,7 @@ async function initialize() {
   moduleInstance = await createNcnnModule({
     locateFile: file => new URL("./runtime/" + file, import.meta.url).href
   });
+  self.postMessage({ type: "progress", status: "Initializing YOLO model", detail: "NCNN runtime loaded. Initializing YOLO26n-Pose…" });
   moduleInstance.FS.writeFile("/model.param", new Uint8Array(paramBytes));
   moduleInstance.FS.writeFile("/model.bin", new Uint8Array(binBytes));
 
@@ -179,9 +182,9 @@ self.onmessage = async event => {
   const message = event.data;
   if (message.type === "init") {
     try {
-      await initialize();
+      await initialize(Boolean(message.forceSingleThread));
     } catch (error) {
-      self.postMessage({ type: "error", message: error.message });
+      self.postMessage({ type: "error", stage: "init", message: error.message });
     }
     return;
   }
