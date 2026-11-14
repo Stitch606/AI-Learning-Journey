@@ -35,9 +35,12 @@ function setStatus(text, ready = false) {
 function supportsWasmSimd() {
   try {
     return WebAssembly.validate(new Uint8Array([
-      0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,
-      3,2,1,0,10,22,1,20,0,253,12,
-      0,0,0,0,0,0,0,0,0,0,0,0,11
+      0,97,115,109,1,0,0,0,
+      1,5,1,96,0,1,123,
+      3,2,1,0,
+      10,22,1,20,0,253,12,
+      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+      11
     ]));
   } catch {
     return false;
@@ -96,6 +99,7 @@ worker.addEventListener("message", event => {
 });
 
 worker.addEventListener("error", event => {
+  cameraButton.disabled = false;
   inferenceBusy = false;
   setStatus("Runtime error");
   notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
@@ -133,7 +137,6 @@ function stopCamera() {
 }
 
 async function startCamera() {
-  if (!workerReady) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     notice.textContent = "Camera access requires HTTPS and a browser with camera support.";
     return;
@@ -219,12 +222,12 @@ window.addEventListener("pagehide", () => {
   if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 });
 
+cameraButton.disabled = false;
 if (!supportsWasmSimd()) {
   setStatus("SIMD unsupported");
-  notice.textContent = "This browser does not support WebAssembly SIMD. The NCNN SIMD runtime cannot run here.";
-  cameraButton.disabled = true;
+  notice.textContent = "Camera preview is available, but this browser does not support WebAssembly SIMD, so local pose inference cannot start.";
 } else {
   setStatus("Loading NCNN model");
-  cameraButton.disabled = true;
+  notice.textContent = "Loading the local NCNN model. You can open the camera while it loads.";
   worker.postMessage({ type: "init" });
 }
