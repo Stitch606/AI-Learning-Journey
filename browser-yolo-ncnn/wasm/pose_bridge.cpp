@@ -14,12 +14,13 @@ std::vector<float> g_results;
 int g_detection_count = 0;
 constexpr int kInputSize = 416;
 constexpr int kKeypointCount = 17;
-constexpr int kValuesPerDetection = 5 + kKeypointCount * 3;
+constexpr int kOutputValues = 5 + kKeypointCount * 3;
+constexpr int kMaxModelChannels = 4 + 80 + kKeypointCount * 3;
 constexpr float kConfidenceThreshold = 0.30f;
 constexpr float kNmsThreshold = 0.45f;
 
 struct Candidate {
-    float values[kValuesPerDetection];
+    float values[kOutputValues];
     float confidence;
 };
 
@@ -86,54 +87,70 @@ int run_inference(const uint8_t* rgba, int width, int height) {
 
     bool channels_first = false;
     int candidate_count = 0;
-    if (output.dims == 2 && output.h >= kValuesPerDetection) {
+    int model_channels = 0;
+    if (output.dims == 2 && output.h >= 56 && output.h <= kMaxModelChannels) {
         channels_first = true;
+        model_channels = output.h;
         candidate_count = output.w;
-    } else if (output.dims == 2 && output.w >= kValuesPerDetection) {
+    } else if (output.dims == 2 && output.w >= 56 && output.w <= kMaxModelChannels) {
         channels_first = false;
+        model_channels = output.w;
         candidate_count = output.h;
-    } else if (output.dims == 3 && output.c == 1 && output.h >= kValuesPerDetection) {
+    } else if (output.dims == 3 && output.c == 1 &&
+               output.h >= 56 && output.h <= kMaxModelChannels) {
         channels_first = true;
+        model_channels = output.h;
         candidate_count = output.w;
-    } else if (output.dims == 3 && output.c == 1 && output.w >= kValuesPerDetection) {
+    } else if (output.dims == 3 && output.c == 1 &&
+               output.w >= 56 && output.w <= kMaxModelChannels) {
         channels_first = false;
+        model_channels = output.w;
         candidate_count = output.h;
     } else {
         return -4;
     }
 
+    const int class_count = model_channels - 4 - kKeypointCount * 3;
+    if (class_count < 1 || class_count > 80) return -5;
+    const int keypoint_offset = 4 + class_count;
+
     std::vector<Candidate> candidates;
     candidates.reserve(candidate_count);
 
     for (int i = 0; i < candidate_count; ++i) {
-        Candidate candidate{};
-        for (int channel = 0; channel < kValuesPerDetection; ++channel) {
-            candidate.values[channel] = value_at(output, channel, i, channels_first);
+        float best_score = 0.f;
+        for (int c = 0; c < class_count; ++c) {
+            best_score = std::max(best_score,
+                value_at(output, 4 + c, i, channels_first));
         }
+        if (!std::isfinite(best_score) || best_score < kConfidenceThreshold) continue;
 
-        candidate.confidence = candidate.values[4];
-        if (!std::isfinite(candidate.confidence) ||
-            candidate.confidence < kConfidenceThreshold) continue;
-
-        const float cx = candidate.values[0];
-        const float cy = candidate.values[1];
-        const float box_w = candidate.values[2];
-        const float box_h = candidate.values[3];
+        const float cx = value_at(output, 0, i, channels_first);
+        const float cy = value_at(output, 1, i, channels_first);
+        const float box_w = value_at(output, 2, i, channels_first);
+        const float box_h = value_at(output, 3, i, channels_first);
         if (!std::isfinite(cx) || !std::isfinite(cy) ||
             !std::isfinite(box_w) || !std::isfinite(box_h) ||
             box_w <= 0.f || box_h <= 0.f) continue;
 
+        Candidate candidate{};
+        candidate.confidence = best_score;
         candidate.values[0] = std::max(0.f, cx - box_w * 0.5f);
         candidate.values[1] = std::max(0.f, cy - box_h * 0.5f);
         candidate.values[2] = std::min(static_cast<float>(kInputSize), cx + box_w * 0.5f);
         candidate.values[3] = std::min(static_cast<float>(kInputSize), cy + box_h * 0.5f);
+        candidate.values[4] = best_score;
 
         for (int k = 0; k < kKeypointCount; ++k) {
-            const int offset = 5 + k * 3;
-            if (!std::isfinite(candidate.values[offset]) ||
-                !std::isfinite(candidate.values[offset + 1]) ||
-                !std::isfinite(candidate.values[offset + 2])) {
-                candidate.values[offset + 2] = 0.f;
+            const int source = keypoint_offset + k * 3;
+            const int target = 5 + k * 3;
+            candidate.values[target] = value_at(output, source, i, channels_first);
+            candidate.values[target + 1] = value_at(output, source + 1, i, channels_first);
+            candidate.values[target + 2] = value_at(output, source + 2, i, channels_first);
+            if (!std::isfinite(candidate.values[target]) ||
+                !std::isfinite(candidate.values[target + 1]) ||
+                !std::isfinite(candidate.values[target + 2])) {
+                candidate.values[target + 2] = 0.f;
             }
         }
         candidates.push_back(candidate);
@@ -161,10 +178,10 @@ int run_inference(const uint8_t* rgba, int width, int height) {
     }
 
     g_detection_count = static_cast<int>(selected.size());
-    g_results.reserve(selected.size() * kValuesPerDetection);
+    g_results.reserve(selected.size() * kOutputValues);
     for (const Candidate& candidate : selected) {
         g_results.insert(g_results.end(), candidate.values,
-                         candidate.values + kValuesPerDetection);
+                         candidate.values + kOutputValues);
     }
     return g_detection_count;
 }
