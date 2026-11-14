@@ -48,6 +48,35 @@ try {
   }));
   console.log(`CAMERA_OK ${JSON.stringify(camera)}`);
 
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(
+    () => document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
+    null,
+    { timeout: 120000 }
+  );
+  await page.locator("#image-input").setInputFiles("browser-yolo-ncnn/.ci/bus.jpg");
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector("#overlay");
+    if (!canvas || !canvas.width || !canvas.height) return false;
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 3; i < pixels.length; i += 4) {
+      if (pixels[i] > 0) return true;
+    }
+    return false;
+  }, null, { timeout: 30000 });
+  const appImagePipeline = await page.evaluate(() => {
+    const canvas = document.querySelector("#overlay");
+    return {
+      previewLoaded: document.querySelector("#image-preview")?.naturalWidth > 0,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      renderedPixels: true
+    };
+  });
+  if (!appImagePipeline.previewLoaded)
+    throw new Error("The application image preview did not load.");
+  console.log(`APP_IMAGE_PIPELINE_OK ${JSON.stringify(appImagePipeline)}`);
+
   const benchmark = await page.evaluate(async () => {
     const worker = new Worker("./inference-worker.js", { type: "module" });
     const waitFor = (type, timeout = 120000) => new Promise((resolve, reject) => {
