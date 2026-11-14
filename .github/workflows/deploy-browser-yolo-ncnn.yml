@@ -86,8 +86,8 @@ jobs:
             -s ENVIRONMENT=worker \
             -s FILESYSTEM=1 \
             -s ALLOW_MEMORY_GROWTH=1 \
-            -s INITIAL_MEMORY=268435456 \
-            -s MAXIMUM_MEMORY=1073741824 \
+            -s INITIAL_MEMORY=134217728 \
+            -s MAXIMUM_MEMORY=805306368 \
             -s STACK_SIZE=8388608 \
             -s EXPORTED_FUNCTIONS='["_malloc","_free","_init_model","_run_inference","_get_detection_count","_copy_detections"]' \
             -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8"]' \
