@@ -96,6 +96,10 @@ export class PoseRenderer {
     const offsetX = (canvasWidth - sourceWidth * scale) / 2;
     const offsetY = (canvasHeight - sourceHeight * scale) / 2;
 
+    const activeTrackIds = new Set(detections
+      .filter(detection => detection.trackId != null || detection.id != null)
+      .map(detection => detection.trackId ?? detection.id));
+
     ctx.save();
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
@@ -163,6 +167,9 @@ export class PoseRenderer {
     });
 
     ctx.restore();
+    for (const trackId of this.smoothed.keys()) {
+      if (!activeTrackIds.has(trackId)) this.smoothed.delete(trackId);
+    }
   }
 
   drawLabel(text, x, y, color, scale, dpr) {
