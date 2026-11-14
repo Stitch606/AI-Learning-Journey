@@ -85,27 +85,18 @@ int run_inference(const uint8_t* rgba, int width, int height) {
     ncnn::Mat output;
     if (extractor.extract(g_output_blob.c_str(), output) != 0) return -3;
 
+    ncnn::Mat output2d = output.dims == 3 && output.c == 1 ? output.channel(0) : output;
     bool channels_first = false;
     int candidate_count = 0;
     int model_channels = 0;
-    if (output.dims == 2 && output.h >= 56 && output.h <= kMaxModelChannels) {
+    if (output2d.dims == 2 && output2d.h >= 56 && output2d.h <= kMaxModelChannels) {
         channels_first = true;
-        model_channels = output.h;
-        candidate_count = output.w;
-    } else if (output.dims == 2 && output.w >= 56 && output.w <= kMaxModelChannels) {
+        model_channels = output2d.h;
+        candidate_count = output2d.w;
+    } else if (output2d.dims == 2 && output2d.w >= 56 && output2d.w <= kMaxModelChannels) {
         channels_first = false;
-        model_channels = output.w;
-        candidate_count = output.h;
-    } else if (output.dims == 3 && output.c == 1 &&
-               output.h >= 56 && output.h <= kMaxModelChannels) {
-        channels_first = true;
-        model_channels = output.h;
-        candidate_count = output.w;
-    } else if (output.dims == 3 && output.c == 1 &&
-               output.w >= 56 && output.w <= kMaxModelChannels) {
-        channels_first = false;
-        model_channels = output.w;
-        candidate_count = output.h;
+        model_channels = output2d.w;
+        candidate_count = output2d.h;
     } else {
         return -4;
     }
@@ -121,14 +112,14 @@ int run_inference(const uint8_t* rgba, int width, int height) {
         float best_score = 0.f;
         for (int c = 0; c < class_count; ++c) {
             best_score = std::max(best_score,
-                value_at(output, 4 + c, i, channels_first));
+                value_at(output2d, 4 + c, i, channels_first));
         }
         if (!std::isfinite(best_score) || best_score < kConfidenceThreshold) continue;
 
-        const float cx = value_at(output, 0, i, channels_first);
-        const float cy = value_at(output, 1, i, channels_first);
-        const float box_w = value_at(output, 2, i, channels_first);
-        const float box_h = value_at(output, 3, i, channels_first);
+        const float cx = value_at(output2d, 0, i, channels_first);
+        const float cy = value_at(output2d, 1, i, channels_first);
+        const float box_w = value_at(output2d, 2, i, channels_first);
+        const float box_h = value_at(output2d, 3, i, channels_first);
         if (!std::isfinite(cx) || !std::isfinite(cy) ||
             !std::isfinite(box_w) || !std::isfinite(box_h) ||
             box_w <= 0.f || box_h <= 0.f) continue;
@@ -144,9 +135,9 @@ int run_inference(const uint8_t* rgba, int width, int height) {
         for (int k = 0; k < kKeypointCount; ++k) {
             const int source = keypoint_offset + k * 3;
             const int target = 5 + k * 3;
-            candidate.values[target] = value_at(output, source, i, channels_first);
-            candidate.values[target + 1] = value_at(output, source + 1, i, channels_first);
-            candidate.values[target + 2] = value_at(output, source + 2, i, channels_first);
+            candidate.values[target] = value_at(output2d, source, i, channels_first);
+            candidate.values[target + 1] = value_at(output2d, source + 1, i, channels_first);
+            candidate.values[target + 2] = value_at(output2d, source + 2, i, channels_first);
             if (!std::isfinite(candidate.values[target]) ||
                 !std::isfinite(candidate.values[target + 1]) ||
                 !std::isfinite(candidate.values[target + 2])) {
