@@ -35,7 +35,7 @@ jobs:
       - name: Export YOLO26n-Pose to NCNN FP16
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ultralytics
+          python -m pip install ultralytics ncnn pnnx==20260526
           python browser-yolo-ncnn/tools/export_model.py
           python browser-yolo-ncnn/wasm/inspect_model.py
 
