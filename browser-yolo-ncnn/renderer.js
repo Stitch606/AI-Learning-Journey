@@ -133,7 +133,7 @@ export class PoseRenderer {
 
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = this.lineWidth / scale;
+      ctx.lineWidth = this.lineWidth * dpr / scale;
 
       for (const [a, b] of COCO_SKELETON) {
         const first = points[a];
