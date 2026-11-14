@@ -49,6 +49,7 @@ def read_model_io(param_path: Path) -> tuple[str, str]:
 def main() -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model = YOLO(SOURCE_MODEL)
+    num_classes = int(model.model.model[-1].nc)
     exported = Path(model.export(
         format="ncnn",
         quantize=16,
@@ -76,6 +77,7 @@ def main() -> None:
         "input_size": IMAGE_SIZE,
         "keypoints": 17,
         "values_per_candidate": 56,
+        "num_classes": num_classes,
         "precision": "FP16",
         "model": SOURCE_MODEL,
     }
