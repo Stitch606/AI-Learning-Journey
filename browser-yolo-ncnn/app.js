@@ -16,6 +16,35 @@ const renderer = new PoseRenderer(canvas, {
   pointRadius: 3.1
 });
 
+async function prepareThreadIsolation() {
+  if (!("serviceWorker" in navigator)) return false;
+  try {
+    await navigator.serviceWorker.register("./coi-serviceworker.js", { scope: "./" });
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise(resolve => {
+        const timeout = setTimeout(resolve, 5000);
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          clearTimeout(timeout);
+          resolve();
+        }, { once: true });
+      });
+      if (navigator.serviceWorker.controller) {
+        window.location.reload();
+        return false;
+      }
+    }
+    return Boolean(window.crossOriginIsolated &&
+      typeof SharedArrayBuffer !== "undefined");
+  } catch (error) {
+    console.warn("Threaded NCNN unavailable; using SIMD single-thread fallback.", error);
+    return false;
+  }
+}
+
+const threadIsolationReady = await prepareThreadIsolation();
+window.__ncnnIsolationReady = threadIsolationReady;
+
 let cameraStream = null;
 let cameraRunning = false;
 let workerReady = false;
@@ -78,7 +107,9 @@ worker.addEventListener("message", event => {
   if (message.type === "ready") {
     workerReady = true;
     cameraButton.disabled = false;
-    setStatus("NCNN · model ready", true);
+    setStatus(message.runtimeMode === "simd-threads"
+      ? `NCNN · SIMD · ${message.numThreads} CPU threads`
+      : "NCNN · SIMD · single thread", true);
     notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose an image.";
     return;
   }
