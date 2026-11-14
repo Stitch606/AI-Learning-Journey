@@ -41,12 +41,14 @@ if len(input_names) != 1:
 if len(outputs) != 1:
     raise RuntimeError(f"Expected one model output, found {outputs}")
 
-config = {
+config_path = model_dir / "model-config.json"
+config = json.loads(config_path.read_text()) if config_path.exists() else {}
+config.update({
     "input": input_names[0],
     "output": outputs[0],
     "input_size": 416,
     "keypoints": 17,
     "values_per_candidate": 56
-}
-(model_dir / "model-config.json").write_text(json.dumps(config, indent=2) + "\n")
+})
+config_path.write_text(json.dumps(config, indent=2) + "\n")
 print(json.dumps(config, indent=2))
