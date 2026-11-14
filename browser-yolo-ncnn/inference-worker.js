@@ -1,8 +1,9 @@
-import createNcnnModule from "./runtime/ncnn.js";
+
 
 const INPUT_SIZE = 416;
 const VALUES_PER_DETECTION = 56;
 let moduleInstance = null;
+let runtimeMode = "simd-single";
 let ready = false;
 let canvas = null;
 let context = null;
@@ -38,6 +39,16 @@ async function initialize() {
     binResponse.arrayBuffer()
   ]);
 
+  const canUseThreads = self.crossOriginIsolated &&
+    typeof SharedArrayBuffer !== "undefined";
+  const runtimeUrl = canUseThreads
+    ? "./runtime/ncnn-threaded.js"
+    : "./runtime/ncnn.js";
+  const { default: createNcnnModule } = await import(runtimeUrl);
+  runtimeMode = canUseThreads ? "simd-threads" : "simd-single";
+  const numThreads = canUseThreads
+    ? Math.max(1, Math.min(self.navigator.hardwareConcurrency || 2, 8))
+    : 1;
   moduleInstance = await createNcnnModule({
     locateFile: file => new URL("./runtime/" + file, import.meta.url).href
   });
@@ -48,7 +59,7 @@ async function initialize() {
   const binPath = allocateCString("/model.bin");
   const inputName = allocateCString(config.input);
   const outputName = allocateCString(config.output);
-  const result = moduleInstance._init_model(paramPath, binPath, inputName, outputName);
+  const result = moduleInstance._init_model(paramPath, binPath, inputName, outputName, numThreads);
   [paramPath, binPath, inputName, outputName].forEach(pointer => moduleInstance._free(pointer));
   if (result !== 0) throw new Error("NCNN model initialization failed (" + result + ").");
 
@@ -59,7 +70,7 @@ async function initialize() {
   if (!pixelPointer || !outputPointer) throw new Error("Could not allocate inference buffers.");
 
   ready = true;
-  self.postMessage({ type: "ready" });
+  self.postMessage({ type: "ready", runtimeMode, numThreads });
 }
 
 
