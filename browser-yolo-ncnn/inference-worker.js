@@ -9,6 +9,9 @@ let context = null;
 let pixelPointer = 0;
 let outputPointer = 0;
 let config = null;
+let frameIndex = 0;
+let nextTrackId = 1;
+let tracks = [];
 
 function allocateCString(value) {
   const size = moduleInstance.lengthBytesUTF8(value) + 1;
@@ -57,6 +60,52 @@ async function initialize() {
 
   ready = true;
   self.postMessage({ type: "ready" });
+}
+
+
+function boxIoU(a, b) {
+  const left = Math.max(a[0], b[0]);
+  const top = Math.max(a[1], b[1]);
+  const right = Math.min(a[2], b[2]);
+  const bottom = Math.min(a[3], b[3]);
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1]);
+  const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+  return intersection / (areaA + areaB - intersection + 1e-6);
+}
+
+function attachTrackIds(detections) {
+  frameIndex += 1;
+  const claimed = new Set();
+
+  for (const detection of detections) {
+    let bestTrack = null;
+    let bestOverlap = 0.20;
+
+    for (const track of tracks) {
+      if (claimed.has(track.id)) continue;
+      const overlap = boxIoU(detection.box, track.box);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        bestTrack = track;
+      }
+    }
+
+    if (bestTrack) {
+      bestTrack.box = detection.box;
+      bestTrack.lastSeen = frameIndex;
+      detection.trackId = bestTrack.id;
+      claimed.add(bestTrack.id);
+    } else {
+      const id = nextTrackId++;
+      tracks.push({ id, box: detection.box, lastSeen: frameIndex });
+      detection.trackId = id;
+      claimed.add(id);
+    }
+  }
+
+  tracks = tracks.filter(track => frameIndex - track.lastSeen <= 12);
+  return detections;
 }
 
 function decodeResults(bitmap) {
@@ -110,7 +159,7 @@ function decodeResults(bitmap) {
     });
   }
 
-  return { sourceWidth, sourceHeight, detections };
+  return { sourceWidth, sourceHeight, detections: attachTrackIds(detections) };
 }
 
 self.onmessage = async event => {
