@@ -123,7 +123,9 @@ function decodeResults(bitmap) {
   const pixels = context.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   moduleInstance.HEAPU8.set(pixels, pixelPointer);
 
+  const inferenceStart = performance.now();
   const result = moduleInstance._run_inference(pixelPointer, INPUT_SIZE, INPUT_SIZE);
+  const inferenceMs = performance.now() - inferenceStart;
   if (result < 0) throw new Error("NCNN inference failed (" + result + ").");
 
   const count = moduleInstance._get_detection_count();
@@ -159,7 +161,7 @@ function decodeResults(bitmap) {
     });
   }
 
-  return { sourceWidth, sourceHeight, detections: attachTrackIds(detections) };
+  return { sourceWidth, sourceHeight, detections: attachTrackIds(detections), inferenceMs };
 }
 
 self.onmessage = async event => {
