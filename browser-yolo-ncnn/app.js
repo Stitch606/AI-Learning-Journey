@@ -53,8 +53,95 @@ let animationFrame = 0;
 let lastSubmittedAt = 0;
 let pendingBitmap = null;
 let selectedImageUrl = null;
+let worker = null;
+let workerInitTimer = 0;
+let usingSingleThreadFallback = false;
 
-const worker = new Worker("./inference-worker.js", { type: "module" });
+cameraButton.disabled = true;
+imageInput.disabled = true;
+
+function launchWorker(forceSingleThread = false) {
+  clearTimeout(workerInitTimer);
+  worker?.terminate();
+  workerReady = false;
+  inferenceBusy = false;
+  worker = new Worker("./inference-worker.js", { type: "module" });
+
+  worker.addEventListener("message", event => {
+    const message = event.data;
+
+    if (message.type === "progress") {
+      setStatus(message.status);
+      notice.textContent = message.detail;
+      return;
+    }
+
+    if (message.type === "ready") {
+      clearTimeout(workerInitTimer);
+      workerReady = true;
+      cameraButton.disabled = false;
+      imageInput.disabled = false;
+      setStatus(message.runtimeMode === "simd-threads"
+        ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
+        : "NCNN · SIMD · single thread · model ready", true);
+      notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose an image.";
+      return;
+    }
+
+    if (message.type === "error") {
+      if (!usingSingleThreadFallback && message.stage !== "frame") {
+        retrySingleThread(message.message);
+        return;
+      }
+      clearTimeout(workerInitTimer);
+      inferenceBusy = false;
+      setStatus("Model loading failed");
+      notice.textContent = "NCNN could not start: " + message.message;
+      cameraButton.disabled = true;
+      imageInput.disabled = true;
+      processPendingFrame();
+    }
+  });
+
+  worker.addEventListener("error", event => {
+    if (!usingSingleThreadFallback) {
+      retrySingleThread(event.message || "Threaded runtime crashed.");
+      return;
+    }
+    clearTimeout(workerInitTimer);
+    cameraButton.disabled = true;
+    imageInput.disabled = true;
+    inferenceBusy = false;
+    setStatus("Runtime error");
+    notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
+  });
+
+  workerInitTimer = setTimeout(() => {
+    if (workerReady) return;
+    if (!usingSingleThreadFallback) {
+      retrySingleThread("Threaded NCNN startup timed out.");
+    } else {
+      setStatus("Model loading timed out");
+      notice.textContent = "NCNN is taking too long to initialize. Reload the page and try again.";
+      cameraButton.disabled = true;
+      imageInput.disabled = true;
+      worker.terminate();
+    }
+  }, 30000);
+
+  worker.postMessage({ type: "init", forceSingleThread });
+}
+
+function retrySingleThread(reason) {
+  if (usingSingleThreadFallback) return;
+  usingSingleThreadFallback = true;
+  clearTimeout(workerInitTimer);
+  cameraButton.disabled = true;
+  imageInput.disabled = true;
+  setStatus("Retrying with single-thread NCNN");
+  notice.textContent = reason + " Switching to the compatible single-thread runtime…";
+  launchWorker(true);
+}
 
 function setStatus(text, ready = false) {
   statusText.textContent = text;
@@ -103,37 +190,16 @@ function processPendingFrame() {
 
 worker.addEventListener("message", event => {
   const message = event.data;
-
-  if (message.type === "ready") {
-    workerReady = true;
-    cameraButton.disabled = false;
-    setStatus(message.runtimeMode === "simd-threads"
-      ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
-      : "NCNN · SIMD · single thread · model ready", true);
-    notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose an image.";
-    return;
-  }
-
   if (message.type === "result") {
     renderer.draw(message.detections, message.sourceWidth, message.sourceHeight);
     inferenceBusy = false;
     processPendingFrame();
-    return;
-  }
-
-  if (message.type === "error") {
+  } else if (message.type === "frame-error") {
     inferenceBusy = false;
     setStatus("Inference error");
     notice.textContent = message.message;
     processPendingFrame();
   }
-});
-
-worker.addEventListener("error", event => {
-  cameraButton.disabled = false;
-  inferenceBusy = false;
-  setStatus("Runtime error");
-  notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
 });
 
 async function captureCameraFrame(timestamp) {
@@ -168,6 +234,10 @@ function stopCamera() {
 }
 
 async function startCamera() {
+  if (!workerReady) {
+    notice.textContent = "Wait until the NCNN model status says model ready.";
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
     notice.textContent = "Camera access requires HTTPS and a browser with camera support.";
     return;
@@ -253,12 +323,11 @@ window.addEventListener("pagehide", () => {
   if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 });
 
-cameraButton.disabled = false;
 if (!supportsWasmSimd()) {
   setStatus("SIMD unsupported");
   notice.textContent = "Camera preview is available, but this browser does not support WebAssembly SIMD, so local pose inference cannot start.";
 } else {
   setStatus("Loading NCNN model");
-  notice.textContent = "Loading the local NCNN model. You can open the camera while it loads.";
-  worker.postMessage({ type: "init" });
+  notice.textContent = "Loading the local NCNN model. Camera controls unlock when the model is ready.";
+  launchWorker(false);
 }
