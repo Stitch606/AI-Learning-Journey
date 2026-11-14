@@ -92,6 +92,7 @@ export class PoseRenderer {
     if (!sourceWidth || !sourceHeight || !Array.isArray(detections)) return;
 
     const scale = Math.min(canvasWidth / sourceWidth, canvasHeight / sourceHeight);
+    const dpr = canvasWidth / Math.max(1, this.canvas.getBoundingClientRect().width);
     const offsetX = (canvasWidth - sourceWidth * scale) / 2;
     const offsetY = (canvasHeight - sourceHeight * scale) / 2;
 
@@ -105,7 +106,9 @@ export class PoseRenderer {
       const trackId = detection.trackId ?? detection.id ?? index;
       const color = PERSON_COLORS[Math.abs(Number(trackId) || index) % PERSON_COLORS.length];
       const rawPoints = Array.isArray(detection.keypoints) ? detection.keypoints.map(p => this.normalizePoint(p)) : [];
-      const points = this.smoothPoints(trackId, rawPoints);
+      const points = (detection.trackId != null || detection.id != null)
+        ? this.smoothPoints(trackId, rawPoints)
+        : rawPoints;
 
       if (this.boxes && detection.box) {
         const box = detection.box;
@@ -117,13 +120,13 @@ export class PoseRenderer {
           const width = Math.max(0, x2 - x1);
           const height = Math.max(0, y2 - y1);
           ctx.strokeStyle = color;
-          ctx.lineWidth = this.lineWidth / scale;
+          ctx.lineWidth = this.lineWidth * dpr / scale;
           ctx.strokeRect(x1, y1, width, height);
           if (this.labels) {
             const confidence = Number(detection.score ?? detection.confidence);
             const title = detection.label || "Person";
             const suffix = Number.isFinite(confidence) ? ` ${Math.round(confidence * 100)}%` : "";
-            this.drawLabel(`${title}${suffix}`, x1, y1, color, scale);
+            this.drawLabel(`${title}${suffix}`, x1, y1, color, scale, dpr);
           }
         }
       }
@@ -150,9 +153,9 @@ export class PoseRenderer {
         if (!point || point.score < this.keypointThreshold ||
             !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
         ctx.beginPath();
-        ctx.arc(point.x, point.y, this.pointRadius / scale, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, this.pointRadius * dpr / scale, 0, Math.PI * 2);
         ctx.fill();
-        ctx.lineWidth = 1.25 / scale;
+        ctx.lineWidth = 1.25 * dpr / scale;
         ctx.strokeStyle = "rgba(8, 8, 14, 0.9)";
         ctx.stroke();
         ctx.strokeStyle = color;
@@ -162,18 +165,18 @@ export class PoseRenderer {
     ctx.restore();
   }
 
-  drawLabel(text, x, y, color, scale) {
+  drawLabel(text, x, y, color, scale, dpr) {
     const ctx = this.ctx;
-    const fontSize = 12 / scale;
-    const paddingX = 6 / scale;
-    const height = 21 / scale;
+    const fontSize = 12 * dpr / scale;
+    const paddingX = 6 * dpr / scale;
+    const height = 21 * dpr / scale;
     ctx.font = `700 ${fontSize}px system-ui, sans-serif`;
     const width = ctx.measureText(text).width + paddingX * 2;
     const top = Math.max(0, y - height);
     ctx.fillStyle = "rgba(10, 10, 18, 0.88)";
     ctx.fillRect(x, top, width, height);
     ctx.fillStyle = color;
-    ctx.fillRect(x, top, 3 / scale, height);
+    ctx.fillRect(x, top, 3 * dpr / scale, height);
     ctx.fillStyle = "#ffffff";
     ctx.textBaseline = "middle";
     ctx.fillText(text, x + paddingX, top + height / 2);
