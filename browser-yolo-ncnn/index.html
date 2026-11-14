@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101018">
+  <title>YOLO Pose · NCNN Web</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand-mark">Y</div>
+      <div>
+        <p class="eyebrow">ON-DEVICE COMPUTER VISION</p>
+        <h1>YOLO <span>POSE</span></h1>
+      </div>
+      <span class="engine-tag">NCNN · WASM SIMD</span>
+    </header>
+    <section class="intro">
+      <p class="eyebrow">BROWSER INFERENCE</p>
+      <h2>Pose estimation.<br><span>On your device.</span></h2>
+      <p class="subcopy">Nano model · FP16 · No inference server</p>
+    </section>
+    <section class="viewer-card" aria-label="Camera preview">
+      <div class="viewer-head">
+        <span>LIVE VIEW</span>
+        <span id="runtime-status" class="status"><i></i><span>Preparing runtime</span></span>
+      </div>
+      <div class="stage">
+        <video id="camera" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div id="empty-state" class="empty-state">
+          <div class="camera-icon">◎</div>
+          <strong>Camera preview</strong>
+          <span>Start the camera or choose an image</span>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="camera-button" class="primary">Start camera</button>
+        <label class="secondary" for="image-input">Choose image</label>
+        <input id="image-input" type="file" accept="image/*" hidden>
+      </div>
+    </section>
+    <section class="info-grid">
+      <div class="info-card"><span class="info-label">MODEL</span><strong>YOLO26n-Pose</strong><small>Nano · 17 COCO keypoints</small></div>
+      <div class="info-card"><span class="info-label">PRECISION</span><strong>FP16</strong><small>Half-precision weights</small></div>
+      <div class="info-card"><span class="info-label">EXECUTION</span><strong>Local browser</strong><small>No inference server</small></div>
+    </section>
+    <p id="notice" class="notice" role="status">Checking browser support…</p>
+    <footer>Images and camera frames stay on this device.</footer>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>
