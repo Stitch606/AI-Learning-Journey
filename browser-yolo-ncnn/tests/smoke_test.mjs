@@ -8,6 +8,8 @@ const server = spawn("python", ["-m", "http.server", String(port), "--bind", "12
   cwd: "browser-yolo-ncnn"
 });
 let browser;
+const pageErrors = [];
+
 try {
   await delay(1200);
   browser = await chromium.launch({
@@ -20,7 +22,7 @@ try {
     ]
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  page.on("pageerror", error => { throw error; });
+  page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
 
   const simd = await page.evaluate(() => WebAssembly.validate(new Uint8Array([
@@ -29,6 +31,11 @@ try {
   ])));
   if (!simd) throw new Error("Chromium does not validate WebAssembly SIMD.");
 
+  await page.waitForFunction(
+    () => document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
+    null,
+    { timeout: 120000 }
+  );
   const cameraButton = page.locator("#camera-button");
   await cameraButton.click();
   await page.waitForFunction(() => {
@@ -43,18 +50,21 @@ try {
 
   const benchmark = await page.evaluate(async () => {
     const worker = new Worker("./inference-worker.js", { type: "module" });
-    const waitFor = (type, timeout = 60000) => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Timed out waiting for worker message: ${type}`)), timeout);
+    const waitFor = (type, timeout = 120000) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        worker.removeEventListener("message", listener);
+        reject(new Error(`Timed out waiting for worker message: ${type}`));
+      }, timeout);
       const listener = event => {
-        if (event.data.type === "error") {
+        const data = event.data;
+        if (data?.type === "error") {
           clearTimeout(timer);
           worker.removeEventListener("message", listener);
-          reject(new Error(event.data.message));
-        }
-        if (event.data.type === type) {
+          reject(new Error(data.message || "Unknown inference worker error."));
+        } else if (data?.type === type) {
           clearTimeout(timer);
           worker.removeEventListener("message", listener);
-          resolve(event.data);
+          resolve(data);
         }
       };
       worker.addEventListener("message", listener);
@@ -68,39 +78,59 @@ try {
       const response = await fetch("./.ci/bus.jpg");
       if (!response.ok) throw new Error("Benchmark image download is missing.");
       const imageBlob = await response.blob();
-      const times = [];
+      const endToEndTimes = [];
+      const inferenceTimes = [];
       let finalResult;
-      for (let i = 0; i < 12; i++) {
+
+      for (let i = 0; i < 33; i++) {
         const bitmap = await createImageBitmap(imageBlob);
         const resultPromise = waitFor("result", 30000);
         const start = performance.now();
         worker.postMessage({ type: "frame", bitmap }, [bitmap]);
         finalResult = await resultPromise;
-        times.push(performance.now() - start);
+        const endToEndMs = performance.now() - start;
+        if (!Number.isFinite(finalResult.inferenceMs) || finalResult.inferenceMs <= 0)
+          throw new Error("Worker did not return a valid inference-only timing.");
+        if (i >= 3) {
+          endToEndTimes.push(endToEndMs);
+          inferenceTimes.push(finalResult.inferenceMs);
+        }
       }
 
       const detections = finalResult.detections || [];
-      if (detections.length < 1) throw new Error("YOLO returned zero person detections on bus.jpg.");
+      if (detections.length < 2)
+        throw new Error(`Expected multiple people in bus.jpg; got ${detections.length}.`);
       if (detections.some(d => !Array.isArray(d.keypoints) || d.keypoints.length !== 17))
         throw new Error("At least one detection does not contain 17 keypoints.");
       if (detections.some(d => !Number.isFinite(d.score) || d.score < 0 || d.score > 1))
         throw new Error("Invalid detection confidence.");
-      if (detections.some(d => d.keypoints.some(p => p.length !== 3 || !p.every(Number.isFinite))))
-        throw new Error("Invalid or non-finite keypoint values.");
+      if (detections.some(d => d.keypoints.some(p =>
+        p.length !== 3 || !p.every(Number.isFinite) || p[2] < 0 || p[2] > 1
+      ))) throw new Error("Invalid or non-finite keypoint values.");
 
-      const sorted = [...times].sort((a, b) => a - b);
-      const mean = times.reduce((a, b) => a + b, 0) / times.length;
-      const median = sorted[Math.floor(sorted.length / 2)];
-      const p95 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+      const stats = values => {
+        const sorted = [...values].sort((a, b) => a - b);
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const median = sorted.length % 2
+          ? sorted[Math.floor(sorted.length / 2)]
+          : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+        const p95 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+        return {
+          meanMs: Number(mean.toFixed(2)),
+          medianMs: Number(median.toFixed(2)),
+          p95Ms: Number(p95.toFixed(2)),
+          fpsFromMean: Number((1000 / mean).toFixed(2))
+        };
+      };
+
       return {
-        iterations: times.length,
+        warmupIterations: 3,
+        measuredIterations: inferenceTimes.length,
         detections: detections.length,
         keypointsPerPerson: 17,
-        meanMs: Number(mean.toFixed(2)),
-        medianMs: Number(median.toFixed(2)),
-        p95Ms: Number(p95.toFixed(2)),
-        meanFps: Number((1000 / mean).toFixed(2)),
-        lastFrame: { width: finalResult.sourceWidth, height: finalResult.sourceHeight }
+        inferenceOnly: stats(inferenceTimes),
+        endToEnd: stats(endToEndTimes),
+        image: { width: finalResult.sourceWidth, height: finalResult.sourceHeight }
       };
     } finally {
       worker.terminate();
@@ -121,12 +151,15 @@ try {
     const ctx = canvas.getContext("2d");
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let painted = false;
-    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) { painted = true; break; }
+    for (let i = 3; i < pixels.length; i += 4) {
+      if (pixels[i] > 0) { painted = true; break; }
+    }
     renderer.destroy();
     if (!painted) throw new Error("Pose renderer did not paint skeleton/box pixels.");
     return { painted };
   });
 
+  if (pageErrors.length) throw new Error("Browser page errors: " + pageErrors.join(" | "));
   console.log(`INFERENCE_BENCHMARK ${JSON.stringify(benchmark)}`);
   console.log(`RENDERER_OK ${JSON.stringify(rendererCheck)}`);
   console.log("BROWSER_MODEL_TEST_PASSED");
