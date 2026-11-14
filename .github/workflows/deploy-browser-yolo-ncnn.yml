@@ -96,7 +96,7 @@ jobs:
             -s MAXIMUM_MEMORY=805306368 \
             -s STACK_SIZE=8388608 \
             -s EXPORTED_FUNCTIONS='["_malloc","_free","_init_model","_run_inference","_get_detection_count","_copy_detections"]' \
-            -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8"]' \
+            -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8","HEAPU8","HEAPF32"]' \
             -o browser-yolo-ncnn/runtime/ncnn.js
           test -s browser-yolo-ncnn/runtime/ncnn.js
           test -s browser-yolo-ncnn/runtime/ncnn.wasm
