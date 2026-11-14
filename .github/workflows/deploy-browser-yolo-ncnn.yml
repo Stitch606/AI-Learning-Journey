@@ -50,56 +50,84 @@ jobs:
           version: 6.0.12
           actions-cache-folder: "emsdk-cache"
 
-      - name: Build NCNN WebAssembly SIMD
+      - name: Build NCNN WebAssembly SIMD and SIMD + Threads
         shell: bash
         run: |
           set -euxo pipefail
           git clone --depth 1 https://github.com/Tencent/ncnn.git "$RUNNER_TEMP/ncnn"
-          emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install" \
-            -DNCNN_THREADS=OFF \
-            -DNCNN_OPENMP=OFF \
-            -DNCNN_SIMPLEOMP=OFF \
-            -DNCNN_SIMPLEOCV=ON \
-            -DNCNN_RUNTIME_CPU=OFF \
-            -DNCNN_SSE2=ON \
-            -DNCNN_AVX=OFF \
-            -DNCNN_AVX2=OFF \
-            -DNCNN_VULKAN=OFF \
-            -DNCNN_BUILD_TOOLS=OFF \
-            -DNCNN_BUILD_EXAMPLES=OFF \
-            -DNCNN_BUILD_BENCHMARK=OFF \
-            -DNCNN_BUILD_TESTS=OFF \
+          COMMON_FLAGS=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DNCNN_SIMPLEOCV=ON
+            -DNCNN_RUNTIME_CPU=OFF
+            -DNCNN_SSE2=ON
+            -DNCNN_AVX=OFF
+            -DNCNN_AVX2=OFF
+            -DNCNN_VULKAN=OFF
+            -DNCNN_BUILD_TOOLS=OFF
+            -DNCNN_BUILD_EXAMPLES=OFF
+            -DNCNN_BUILD_BENCHMARK=OFF
+            -DNCNN_BUILD_TESTS=OFF
             -DNCNN_BUILD_SHARED_LIBS=OFF
-          cmake --build "$RUNNER_TEMP/ncnn/build" --parallel 4
-          cmake --install "$RUNNER_TEMP/ncnn/build"
+          )
 
-      - name: Compile the browser inference bridge
+          # Compatibility build: works on GitHub Pages even without cross-origin isolation.
+          emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build-simd" \
+            "${COMMON_FLAGS[@]}" \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install-simd" \
+            -DNCNN_THREADS=OFF -DNCNN_OPENMP=OFF -DNCNN_SIMPLEOMP=OFF
+          cmake --build "$RUNNER_TEMP/ncnn/build-simd" --parallel 4
+          cmake --install "$RUNNER_TEMP/ncnn/build-simd"
+
+          # Faster multi-core build for browsers with SharedArrayBuffer enabled.
+          emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build-simd-threads" \
+            "${COMMON_FLAGS[@]}" \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install-simd-threads" \
+            -DNCNN_THREADS=ON -DNCNN_OPENMP=ON -DNCNN_SIMPLEOMP=ON
+          cmake --build "$RUNNER_TEMP/ncnn/build-simd-threads" --parallel 4
+          cmake --install "$RUNNER_TEMP/ncnn/build-simd-threads"
+
+      - name: Compile single-thread and multi-thread browser runtimes
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p browser-yolo-ncnn/runtime
-          em++ browser-yolo-ncnn/wasm/pose_bridge.cpp \
-            -I"$RUNNER_TEMP/ncnn-install/include/ncnn" \
-            -L"$RUNNER_TEMP/ncnn-install/lib" \
-            -lncnn \
-            --no-entry \
-            -O3 -msimd128 -DNDEBUG \
-            -s MODULARIZE=1 \
-            -s EXPORT_ES6=1 \
-            -s EXPORT_NAME=createNcnnModule \
-            -s ENVIRONMENT=worker \
-            -s FILESYSTEM=1 \
-            -s ALLOW_MEMORY_GROWTH=1 \
-            -s INITIAL_MEMORY=134217728 \
-            -s MAXIMUM_MEMORY=805306368 \
-            -s STACK_SIZE=8388608 \
-            -s EXPORTED_FUNCTIONS='["_malloc","_free","_init_model","_run_inference","_get_detection_count","_copy_detections"]' \
-            -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8","HEAPU8","HEAPF32"]' \
-            -o browser-yolo-ncnn/runtime/ncnn.js
-          test -s browser-yolo-ncnn/runtime/ncnn.js
-          test -s browser-yolo-ncnn/runtime/ncnn.wasm
+
+          compile_runtime() {
+            local variant="$1"
+            local install="$2"
+            local output="$3"
+            local threads="$4"
+            local pool="$5"
+            local thread_flags=()
+            if [ "$threads" = "ON" ]; then
+              thread_flags=(-pthread -sPTHREAD_POOL_SIZE="$pool")
+            fi
+
+            em++ browser-yolo-ncnn/wasm/pose_bridge.cpp \
+              -I"$install/include/ncnn" \
+              -L"$install/lib" \
+              -lncnn \
+              --no-entry \
+              -O3 -msimd128 -DNDEBUG "${thread_flags[@]}" \
+              -s MODULARIZE=1 \
+              -s EXPORT_ES6=1 \
+              -s EXPORT_NAME=createNcnnModule \
+              -s ENVIRONMENT=worker \
+              -s FILESYSTEM=1 \
+              -s ALLOW_MEMORY_GROWTH=1 \
+              -s INITIAL_MEMORY=134217728 \
+              -s MAXIMUM_MEMORY=805306368 \
+              -s STACK_SIZE=8388608 \
+              -s EXPORTED_FUNCTIONS='["_malloc","_free","_init_model","_run_inference","_get_detection_count","_copy_detections"]' \
+              -s EXPORTED_RUNTIME_METHODS='["FS","stringToUTF8","lengthBytesUTF8","HEAPU8","HEAPF32"]' \
+              -o "browser-yolo-ncnn/runtime/$output.js"
+            test -s "browser-yolo-ncnn/runtime/$output.js"
+            test -s "browser-yolo-ncnn/runtime/$output.wasm"
+            echo "Built $variant runtime: $output"
+          }
+
+          compile_runtime "SIMD single-thread fallback" "$RUNNER_TEMP/ncnn-install-simd" "ncnn" "OFF" "0"
+          compile_runtime "SIMD multi-thread" "$RUNNER_TEMP/ncnn-install-simd-threads" "ncnn-threaded" "ON" "8"
 
       - name: Install headless browser test dependencies
         run: |
