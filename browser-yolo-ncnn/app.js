@@ -55,6 +55,7 @@ let pendingBitmap = null;
 let selectedImageUrl = null;
 let worker = null;
 let workerInitTimer = 0;
+let workerStage = "Starting NCNN";
 let usingSingleThreadFallback = false;
 
 cameraButton.disabled = true;
@@ -71,8 +72,10 @@ function launchWorker(forceSingleThread = false) {
     const message = event.data;
 
     if (message.type === "progress") {
+      workerStage = message.status;
       setStatus(message.status);
       notice.textContent = message.detail;
+      armWorkerTimeout();
       return;
     }
 
@@ -131,20 +134,25 @@ function launchWorker(forceSingleThread = false) {
     notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
   });
 
+  workerStage = "Starting NCNN";
+  armWorkerTimeout();
+  worker.postMessage({ type: "init", forceSingleThread });
+}
+
+function armWorkerTimeout() {
+  clearTimeout(workerInitTimer);
   workerInitTimer = setTimeout(() => {
     if (workerReady) return;
     if (!usingSingleThreadFallback) {
-      retrySingleThread("Threaded NCNN startup timed out.");
-    } else {
-      setStatus("Model loading timed out");
-      notice.textContent = "NCNN is taking too long to initialize. Reload the page and try again.";
-      cameraButton.disabled = true;
-      imageInput.disabled = true;
-      worker.terminate();
+      retrySingleThread(workerStage + " timed out in the threaded runtime.");
+      return;
     }
-  }, 30000);
-
-  worker.postMessage({ type: "init", forceSingleThread });
+    setStatus("Model loading timed out");
+    notice.textContent = workerStage + " is taking longer than 180 seconds. Check the connection, reload the page, and try again.";
+    cameraButton.disabled = true;
+    imageInput.disabled = true;
+    worker?.terminate();
+  }, 180000);
 }
 
 function retrySingleThread(reason) {
