@@ -103,7 +103,6 @@ function decodeResults(bitmap) {
       ]);
     }
     detections.push({
-      trackId: i,
       label: "Person",
       score: values[offset + 4],
       box,
