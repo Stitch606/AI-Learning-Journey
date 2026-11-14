@@ -25,6 +25,25 @@ try {
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
 
+  await page.waitForFunction(() => window.__ncnnIsolationReady === true ||
+    document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
+    null, { timeout: 20000 });
+
+  const runtimeConfig = await page.evaluate(async () => {
+    const response = await fetch("./model/model-config.json");
+    if (!response.ok) throw new Error("NCNN model config missing.");
+    return response.json();
+  });
+  if (runtimeConfig.precision !== "FP16" || runtimeConfig.input_size !== 416)
+    throw new Error("Expected FP16 NCNN model at 416x416.");
+
+  const isolation = await page.evaluate(() => ({
+    crossOriginIsolated,
+    sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined"
+  }));
+  if (!isolation.crossOriginIsolated || !isolation.sharedArrayBuffer)
+    throw new Error("Browser did not enable cross-origin isolation for threaded NCNN.");
+
   const simd = await page.evaluate(() => WebAssembly.validate(new Uint8Array([
     0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,22,1,20,0,253,12,
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11
