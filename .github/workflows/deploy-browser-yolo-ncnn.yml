@@ -79,6 +79,7 @@ jobs:
             -I"$RUNNER_TEMP/ncnn-install/include/ncnn" \
             -L"$RUNNER_TEMP/ncnn-install/lib" \
             -lncnn \
+            --no-entry \
             -O3 -msimd128 -DNDEBUG \
             -s MODULARIZE=1 \
             -s EXPORT_ES6=1 \
