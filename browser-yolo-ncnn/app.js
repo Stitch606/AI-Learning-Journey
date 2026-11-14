@@ -88,6 +88,21 @@ function launchWorker(forceSingleThread = false) {
       return;
     }
 
+    if (message.type === "result") {
+      renderer.draw(message.detections, message.sourceWidth, message.sourceHeight);
+      inferenceBusy = false;
+      processPendingFrame();
+      return;
+    }
+
+    if (message.type === "frame-error") {
+      inferenceBusy = false;
+      setStatus("Inference error");
+      notice.textContent = message.message;
+      processPendingFrame();
+      return;
+    }
+
     if (message.type === "error") {
       if (!usingSingleThreadFallback && message.stage !== "frame") {
         retrySingleThread(message.message);
@@ -187,20 +202,6 @@ function processPendingFrame() {
   pendingBitmap = null;
   submitBitmap(nextBitmap, true);
 }
-
-worker.addEventListener("message", event => {
-  const message = event.data;
-  if (message.type === "result") {
-    renderer.draw(message.detections, message.sourceWidth, message.sourceHeight);
-    inferenceBusy = false;
-    processPendingFrame();
-  } else if (message.type === "frame-error") {
-    inferenceBusy = false;
-    setStatus("Inference error");
-    notice.textContent = message.message;
-    processPendingFrame();
-  }
-});
 
 async function captureCameraFrame(timestamp) {
   if (!cameraRunning) return;
