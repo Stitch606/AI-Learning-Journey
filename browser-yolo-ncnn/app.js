@@ -1,3 +1,5 @@
+import { PoseRenderer } from "./renderer.js";
+
 const video = document.querySelector("#camera");
 const canvas = document.querySelector("#overlay");
 const emptyState = document.querySelector("#empty-state");
@@ -6,6 +8,18 @@ const imageInput = document.querySelector("#image-input");
 const statusText = document.querySelector("#runtime-status span");
 const statusDot = document.querySelector("#runtime-status i");
 const notice = document.querySelector("#notice");
+
+const renderer = new PoseRenderer(canvas, {
+  keypointThreshold: 0.25,
+  smoothing: 0.38,
+  lineWidth: 2.4,
+  pointRadius: 3.1
+});
+
+let cameraStream = null;
+let selectedImage = null;
+let animationFrame = 0;
+let latestDetections = [];
 
 function supportsWasmSimd() {
   try {
@@ -20,64 +34,131 @@ function supportsWasmSimd() {
   }
 }
 
-function setStatus(text, ready) {
+function setStatus(text, ready = false) {
   statusText.textContent = text;
   statusDot.style.background = ready ? "#5ee7a0" : "#e7b65a";
 }
 
-function resizeOverlay() {
-  const rect = video.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(rect.width * dpr));
-  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+  }
+  video.pause();
+  video.srcObject = null;
+  cancelAnimationFrame(animationFrame);
+}
+
+function drawLoop() {
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      video.videoWidth && video.videoHeight) {
+    renderer.draw(latestDetections, video.videoWidth, video.videoHeight);
+  }
+  animationFrame = requestAnimationFrame(drawLoop);
 }
 
 async function startCamera() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    notice.textContent = "Camera access is unavailable. Open this page over HTTPS and use a supported browser.";
+  if (!navigator.mediaDevices?.getUserMedia) {
+    notice.textContent = "Camera access requires HTTPS and a browser with camera support.";
     return;
   }
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stopCamera();
+    selectedImage = null;
+    cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 30, max: 30 }
+      }
     });
-    video.srcObject = stream;
+
+    video.srcObject = cameraStream;
     video.style.display = "block";
     emptyState.style.display = "none";
+    await video.play();
     cameraButton.textContent = "Camera running";
     cameraButton.disabled = true;
-    await video.play();
-    resizeOverlay();
+    drawLoop();
   } catch (error) {
     notice.textContent = "Could not start camera: " + error.message;
   }
 }
 
 cameraButton.addEventListener("click", startCamera);
-window.addEventListener("resize", resizeOverlay);
 
-imageInput.addEventListener("change", function () {
-  const file = imageInput.files && imageInput.files[0];
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files?.[0];
   if (!file) return;
+
+  stopCamera();
+  latestDetections = [];
+  renderer.clear();
   const url = URL.createObjectURL(file);
   const image = new Image();
-  image.onload = function () {
-    video.pause();
-    video.srcObject = null;
+
+  image.onload = () => {
+    selectedImage = image;
     video.style.display = "none";
-    emptyState.style.display = "flex";
-    emptyState.querySelector("strong").textContent = file.name;
-    emptyState.querySelector("span").textContent = image.naturalWidth + " × " + image.naturalHeight + " image selected";
+    emptyState.style.display = "none";
+    const stage = document.querySelector(".stage");
+    let preview = document.querySelector("#image-preview");
+    if (!preview) {
+      preview = document.createElement("img");
+      preview.id = "image-preview";
+      preview.alt = "Selected image";
+      preview.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain";
+      stage.insertBefore(preview, canvas);
+    }
+    preview.src = url;
+    renderer.draw(latestDetections, image.naturalWidth, image.naturalHeight);
+    cameraButton.disabled = false;
+    cameraButton.textContent = "Start camera";
+    notice.textContent = "Image loaded locally. Pose inference is not connected yet.";
+  };
+
+  image.onerror = () => {
     URL.revokeObjectURL(url);
+    notice.textContent = "The selected image could not be decoded.";
   };
   image.src = url;
 });
 
+window.addEventListener("pagehide", stopCamera);
+
 if (supportsWasmSimd()) {
-  setStatus("SIMD supported", true);
-  notice.textContent = "This browser supports WebAssembly SIMD. The NCNN SIMD runtime and pose inference bridge are the next integration step.";
+  setStatus("SIMD ready · model missing");
+  notice.textContent = "WebAssembly SIMD is supported, but NCNN runtime, exported model files, and inference bridge are not present yet. The live pose renderer is ready for detections.";
 } else {
-  setStatus("SIMD unavailable", false);
-  notice.textContent = "This browser does not report WebAssembly SIMD support. The SIMD build cannot run here.";
+  setStatus("SIMD unsupported");
+  notice.textContent = "This browser does not support WebAssembly SIMD. The selected NCNN SIMD runtime cannot run here.";
 }
+
+/*
+ * Inference bridge contract:
+ * window.publishPoseDetections({
+ *   sourceWidth: 416,
+ *   sourceHeight: 416,
+ *   detections: [{
+ *     trackId: 0,
+ *     label: "Person",
+ *     score: 0.94,
+ *     box: [x1, y1, x2, y2],
+ *     keypoints: [[x, y, confidence], ...17 COCO points]
+ *   }]
+ * });
+ *
+ * Coordinates must be in the source image/video coordinate system.
+ * The NCNN bridge should call this once per completed inference frame.
+ */
+window.publishPoseDetections = ({ sourceWidth, sourceHeight, detections }) => {
+  latestDetections = Array.isArray(detections) ? detections : [];
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    renderer.draw(latestDetections, sourceWidth || video.videoWidth, sourceHeight || video.videoHeight);
+  } else if (selectedImage) {
+    renderer.draw(latestDetections, sourceWidth || selectedImage.naturalWidth, sourceHeight || selectedImage.naturalHeight);
+  }
+};
