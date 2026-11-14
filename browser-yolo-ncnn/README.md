@@ -6,7 +6,7 @@ A browser-only YOLO pose demo. Inference is intended to run on the visitor's dev
 
 - Model: official Ultralytics **YOLO26n-pose** (Nano pose)
 - Inference engine: **Tencent NCNN**
-- Browser runtime: **WebAssembly SIMD** (single-threaded build first)
+- Browser runtime: **WebAssembly SIMD + multi-threading** when cross-origin isolation is available, with a single-thread SIMD fallback
 - Model precision: **FP16** (quantize=16)
 - Initial input size: **416 × 416** as a mobile-oriented starting point; benchmark against 640 before deciding the final default.
 - No inference server and no ONNX Runtime.
@@ -24,7 +24,7 @@ A browser-only YOLO pose demo. Inference is intended to run on the visitor's dev
 
 ## Current status
 
-The browser app now has a real inference pipeline: GitHub Actions exports YOLO26n-Pose to NCNN FP16, builds NCNN as single-threaded WebAssembly SIMD, compiles the C++ bridge, and publishes the generated model/runtime with GitHub Pages. The browser loads the model locally in a Web Worker, preprocesses camera/image frames with letterboxing, runs NCNN, decodes person boxes and 17 COCO keypoints, applies confidence filtering and NMS, and sends per-person detections to the streaming canvas renderer. Runtime and model binaries are generated during deployment and are not committed to the source tree.
+The browser app now has a real inference pipeline: GitHub Actions exports YOLO26n-Pose to NCNN FP16, builds SIMD and SIMD+threads WebAssembly runtimes, compiles the C++ bridge, and publishes the generated model/runtime with GitHub Pages. The browser loads the model locally in a Web Worker, preprocesses camera/image frames with letterboxing, runs NCNN, decodes person boxes and 17 COCO keypoints, applies confidence filtering and NMS, and sends per-person detections to the streaming canvas renderer. Runtime and model binaries are generated during deployment and are not committed to the source tree.
 
 ## Export the model
 
@@ -62,4 +62,4 @@ All coordinates must use the same source-image coordinate system. The renderer d
 
 ## Build and deployment
 
-The Pages workflow builds NCNN from Tencent's source with `NCNN_THREADS=OFF` and the WebAssembly SIMD extension enabled, then compiles `wasm/pose_bridge.cpp` with Emscripten. The runtime and FP16 model are generated into the Pages artifact during the workflow. Camera frames are transferred to a dedicated Web Worker; if inference is still running, the next frame is skipped rather than queued, prioritizing low latency.
+The Pages workflow builds two NCNN variants from Tencent's source: SIMD + threads (`NCNN_THREADS=ON`, `NCNN_OPENMP=ON`, `NCNN_SIMPLEOMP=ON`) and a single-thread SIMD fallback. A same-origin service worker supplies COOP/COEP response headers so compatible browsers can use `SharedArrayBuffer`; the worker selects up to 8 CPU threads when isolation is active, otherwise it selects the fallback. Both builds keep the same YOLO26n-Pose FP16 model at 416 × 416. GitHub Pages remains static hosting only. The runtime and FP16 model are generated into the Pages artifact during the workflow. Camera frames are transferred to a dedicated Web Worker; if inference is still running, the next frame is skipped rather than queued, prioritizing low latency.
