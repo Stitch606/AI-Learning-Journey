@@ -329,5 +329,6 @@ if (!supportsWasmSimd()) {
 } else {
   setStatus("Loading NCNN model");
   notice.textContent = "Loading the local NCNN model. Camera controls unlock when the model is ready.";
-  launchWorker(false);
+  usingSingleThreadFallback = !threadIsolationReady;
+  launchWorker(!threadIsolationReady);
 }
