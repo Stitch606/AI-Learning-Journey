@@ -19,7 +19,6 @@ import numpy as np
 import cv2
 from fastapi import File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
-from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -57,6 +56,26 @@ async def health():
 _VIDEO_JOBS = {}
 _VIDEO_JOBS_LOCK = Lock()
 _VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_VIDEO_RESULT_TTL_SECONDS = 30 * 60
+
+
+def _cleanup_expired_video_jobs() -> None:
+    """Remove completed/failed demo jobs after their display window expires."""
+    now = datetime.now(timezone.utc).timestamp()
+    expired = []
+    with _VIDEO_JOBS_LOCK:
+        for job_id, job in list(_VIDEO_JOBS.items()):
+            created_at = float(job.get("created_at", now))
+            if job.get("status") in ("completed", "failed") and now - created_at > _VIDEO_RESULT_TTL_SECONDS:
+                expired.append((job_id, job.get("output_path")))
+                _VIDEO_JOBS.pop(job_id, None)
+    for _, output_path in expired:
+        if output_path:
+            try:
+                os.remove(output_path)
+            except FileNotFoundError:
+                pass
+
 
 
 def _run_video_job(job_id: str, input_path: str, output_path: str, progress_path: str) -> None:
@@ -106,6 +125,7 @@ def _run_video_job(job_id: str, input_path: str, output_path: str, progress_path
 @app.post("/api/analyze-video", status_code=202)
 async def analyze_video_upload(file: UploadFile = File(...)):
     """Accept an upload quickly, then analyze it in a background worker."""
+    _cleanup_expired_video_jobs()
     filename = (file.filename or "video").lower()
     if not filename.endswith((".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")):
         raise HTTPException(status_code=415, detail="Upload an MP4, MOV, M4V, AVI, MKV, or WebM video.")
@@ -139,6 +159,7 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                 "filename": Path(filename).name,
                 "output_path": output_path,
                 "progress_path": progress_path,
+                "created_at": datetime.now(timezone.utc).timestamp(),
             }
         _VIDEO_EXECUTOR.submit(_run_video_job, job_id, input_path, output_path, progress_path)
         return {"job_id": job_id, "status": "queued"}
