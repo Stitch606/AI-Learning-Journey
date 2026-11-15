@@ -181,9 +181,9 @@ async def get_video_analysis_status(job_id: str):
         }
     return job
 
-
-@app.get("/api/analyze-video/{job_id}/result")
+\n@app.get("/api/analyze-video/{job_id}/result")
 async def get_video_analysis_result(job_id: str):
+    """Serve the analyzed MP4 directly to the browser's native video player."""
     with _VIDEO_JOBS_LOCK:
         job = _VIDEO_JOBS.get(job_id)
         if not job or job.get("status") != "completed":
@@ -192,43 +192,22 @@ async def get_video_analysis_result(job_id: str):
         result = job.get("result")
 
     if not output_path or not os.path.isfile(output_path):
-        raise HTTPException(
-            status_code=500,
-            detail="Analysis finished, but the output video file is missing on the Space server.",
-        )
-
-    file_size = os.path.getsize(output_path)
-    if file_size <= 0:
+        raise HTTPException(status_code=500, detail="Analysis finished, but the output video file is missing on the Space server.")
+    if os.path.getsize(output_path) <= 0:
         raise HTTPException(status_code=500, detail="The analyzed video file is empty.")
 
     headers = {
-        "Content-Length": str(file_size),
-        "Accept-Ranges": "none",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": 'inline; filename="analyzed-video.mp4"',
         "X-Frames-Analyzed": str(result["frames_analyzed"]),
         "X-Video-Duration": str(result["duration_seconds"]),
         "X-Analysis-FPS": str(result["output_fps"]),
         "X-Video-Codec": result["codec"],
         "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
     }
-
-    def cleanup_video_result():
-        try:
-            os.remove(output_path)
-        except FileNotFoundError:
-            pass
-        with _VIDEO_JOBS_LOCK:
-            _VIDEO_JOBS.pop(job_id, None)
-
-    # FileResponse lets Starlette serve the MP4 as a normal file response with
-    # a known Content-Length and efficient chunking. This is more reliable
-    # behind Hugging Face's reverse proxy than a hand-written StreamingResponse.
-    return FileResponse(
-        path=output_path,
-        media_type="video/mp4",
-        filename="analyzed-video.mp4",
-        headers=headers,
-        background=BackgroundTask(cleanup_video_result),
-    )
+    # Keep the result file available for metadata, playback, and seek requests.
+    return FileResponse(path=output_path, media_type="video/mp4", headers=headers)
 
 
 def process_frame(frame: Image.Image) -> dict:
