@@ -112,6 +112,7 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                 "stage": "queued",
                 "progress": 0.0,
                 "filename": Path(filename).name,
+                "output_path": output_path,
             }
         _VIDEO_EXECUTOR.submit(_run_video_job, job_id, input_path, output_path)
         return {"job_id": job_id, "status": "queued"}
