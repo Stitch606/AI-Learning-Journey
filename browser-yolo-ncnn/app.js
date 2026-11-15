@@ -1,4 +1,4 @@
-import { PoseRenderer } from "./renderer.js";
+import { PoseRenderer } from "./renderer.js?v=3";
 
 const video = document.querySelector("#camera");
 const canvas = document.querySelector("#overlay");
@@ -66,7 +66,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=2", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=3", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
