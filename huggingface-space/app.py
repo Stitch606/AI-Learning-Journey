@@ -59,25 +59,48 @@ _VIDEO_JOBS_LOCK = Lock()
 _VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
-def _run_video_job(job_id: str, input_path: str, output_path: str) -> None:
+def _run_video_job(job_id: str, input_path: str, output_path: str, progress_path: str) -> None:
     with _VIDEO_JOBS_LOCK:
         _VIDEO_JOBS[job_id].update(status="processing", stage="processing")
     try:
-        result = analyze_video_file(input_path, output_path, job_id)
+        result = analyze_video_file(input_path, progress_path)
+        video_bytes = result.pop("video_bytes", None)
+        if not isinstance(video_bytes, bytes) or not video_bytes:
+            raise RuntimeError("The GPU worker completed without returning an MP4 video.")
+        if len(video_bytes) > 256 * 1024 * 1024:
+            raise RuntimeError("The analyzed video exceeds the 256 MB result limit.")
+        with open(output_path, "wb") as destination:
+            destination.write(video_bytes)
+            destination.flush()
+            os.fsync(destination.fileno())
+        if not os.path.isfile(output_path) or os.path.getsize(output_path) != len(video_bytes):
+            raise RuntimeError("The web server could not persist the analyzed video returned by the GPU worker.")
         with _VIDEO_JOBS_LOCK:
-            _VIDEO_JOBS[job_id].update(status="completed", stage="completed", progress=100.0, result=result)
+            _VIDEO_JOBS[job_id].update(
+                status="completed",
+                stage="completed",
+                progress=100.0,
+                result=result,
+                output_ready=True,
+                output_size=len(video_bytes),
+            )
     except Exception as error:
         with _VIDEO_JOBS_LOCK:
-            _VIDEO_JOBS[job_id].update(status="failed", stage="failed", error=str(error))
+            _VIDEO_JOBS[job_id].update(
+                status="failed",
+                stage="failed",
+                error=f"{type(error).__name__}: {error}",
+            )
         try:
             os.remove(output_path)
         except FileNotFoundError:
             pass
     finally:
-        try:
-            os.remove(input_path)
-        except FileNotFoundError:
-            pass
+        for path in (input_path, progress_path):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
 
 
 @app.post("/api/analyze-video", status_code=202)
@@ -92,6 +115,8 @@ async def analyze_video_upload(file: UploadFile = File(...)):
     output_fd, output_path = tempfile.mkstemp(suffix=".mp4")
     os.close(output_fd)
     os.unlink(output_path)
+    progress_fd, progress_path = tempfile.mkstemp(suffix=".json")
+    os.close(progress_fd)
 
     try:
         total_bytes = 0
@@ -113,18 +138,19 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                 "progress": 0.0,
                 "filename": Path(filename).name,
                 "output_path": output_path,
+                "progress_path": progress_path,
             }
-        _VIDEO_EXECUTOR.submit(_run_video_job, job_id, input_path, output_path)
+        _VIDEO_EXECUTOR.submit(_run_video_job, job_id, input_path, output_path, progress_path)
         return {"job_id": job_id, "status": "queued"}
     except HTTPException:
-        for path in (input_path, output_path):
+        for path in (input_path, output_path, progress_path):
             try:
                 os.remove(path)
             except FileNotFoundError:
                 pass
         raise
     except Exception as error:
-        for path in (input_path, output_path):
+        for path in (input_path, output_path, progress_path):
             try:
                 os.remove(path)
             except FileNotFoundError:
@@ -140,8 +166,8 @@ async def get_video_analysis_status(job_id: str):
         job = dict(_VIDEO_JOBS.get(job_id, {}))
     if not job:
         raise HTTPException(status_code=404, detail="Video analysis job was not found.")
-    if job.get("status") == "processing":
-        job.update(get_video_progress(job_id))
+    if job.get("status") == "processing" and job.get("progress_path"):
+        job.update(get_video_progress(job["progress_path"]))
     result = job.pop("result", None)
     if result:
         job["result"] = {
