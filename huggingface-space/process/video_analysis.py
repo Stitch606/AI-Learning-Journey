@@ -84,7 +84,7 @@ def _start_h264_encoder(output_path: str, width: int, height: int, fps: float):
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=error_log,
-        bufsize=0,
+        bufsize=1024 * 1024,
     )
     return process, error_log
 
@@ -101,10 +101,19 @@ def _finish_h264_encoder(process, error_log) -> None:
     except (BrokenPipeError, OSError):
         pass
 
-    return_code = process.wait(timeout=60)
-    error_log.seek(0)
-    error_message = error_log.read().decode("utf-8", errors="replace").strip()
-    error_log.close()
+    try:
+        return_code = process.wait(timeout=90)
+    except subprocess.TimeoutExpired as error:
+        process.kill()
+        process.wait()
+        raise RuntimeError("H.264 video encoding did not finish within 90 seconds.") from error
+
+    try:
+        error_log.seek(0)
+        error_message = error_log.read().decode("utf-8", errors="replace").strip()
+    finally:
+        error_log.close()
+
     if return_code != 0:
         raise RuntimeError("H.264 video encoding failed: " + (error_message[-1200:] or f"FFmpeg exit code {return_code}"))
 
