@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
 
 from gpu import gpu
@@ -29,13 +31,90 @@ def _set_video_progress(progress_path: str, **values) -> None:
     os.replace(temporary, path)
 
 
+def _start_h264_encoder(output_path: str, width: int, height: int, fps: float):
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    probe = subprocess.run(
+        [ffmpeg, "-hide_banner", "-encoders"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    if probe.returncode != 0 or "libx264" not in probe.stdout:
+        raise RuntimeError("The bundled FFmpeg does not provide the H.264 libx264 encoder.")
+
+    error_log = tempfile.TemporaryFile()
+    process = subprocess.Popen(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-video_size",
+            f"{width}x{height}",
+            "-framerate",
+            f"{fps:.6f}",
+            "-i",
+            "pipe:0",
+            "-an",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-profile:v",
+            "baseline",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+            output_path,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=error_log,
+        bufsize=0,
+    )
+    return process, error_log
+
+
+def _finish_h264_encoder(process, error_log) -> None:
+    if process is None:
+        if error_log is not None:
+            error_log.close()
+        return
+
+    try:
+        if process.stdin and not process.stdin.closed:
+            process.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+
+    return_code = process.wait(timeout=60)
+    error_log.seek(0)
+    error_message = error_log.read().decode("utf-8", errors="replace").strip()
+    error_log.close()
+    if return_code != 0:
+        raise RuntimeError("H.264 video encoding failed: " + (error_message[-1200:] or f"FFmpeg exit code {return_code}"))
+
+
 @gpu(duration=120)
 def analyze_video_file(input_path: str, progress_path: str) -> dict:
-    """Analyze an uploaded video on the GPU worker and return portable MP4 bytes.
+    """Analyze a video on the GPU worker and return browser-compatible H.264 MP4 bytes.
 
-    ZeroGPU executes this function in an isolated worker process. A filesystem
-    path created by that worker must not be treated as the web process' output.
-    Returning the encoded bytes makes the hand-off explicit and reliable.
+    ZeroGPU executes this function in an isolated worker process. The encoded
+    video is returned as bytes so the web process can persist and serve it.
     """
     capture = cv2.VideoCapture(input_path)
     if not capture.isOpened():
@@ -57,8 +136,9 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
     output_fd, worker_output_path = tempfile.mkstemp(suffix=".mp4")
     os.close(output_fd)
     os.unlink(worker_output_path)
-    writer = None
-    codec_used = None
+    encoder = None
+    error_log = None
+    codec_used = "h264"
     _set_video_progress(progress_path, stage="processing", progress=0.0, processed_frames=0, total_frames=expected_samples)
 
     reset_streaming_state()
@@ -91,24 +171,20 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
                 else:
                     annotated = bgr_frame
 
-                if writer is None:
+                if encoder is None:
                     height, width = annotated.shape[:2]
-                    for codec in ("avc1", "mp4v"):
-                        candidate = cv2.VideoWriter(
-                            worker_output_path,
-                            cv2.VideoWriter_fourcc(*codec),
-                            output_fps,
-                            (width, height),
-                        )
-                        if candidate.isOpened():
-                            writer = candidate
-                            codec_used = codec
-                            break
-                        candidate.release()
-                    if writer is None:
-                        raise RuntimeError("No MP4 video encoder is available on this Space.")
+                    encoder, error_log = _start_h264_encoder(
+                        worker_output_path,
+                        width,
+                        height,
+                        output_fps,
+                    )
 
-                writer.write(annotated)
+                try:
+                    encoder.stdin.write(np.ascontiguousarray(annotated).tobytes())
+                except (BrokenPipeError, OSError) as error:
+                    raise RuntimeError("The H.264 encoder stopped while receiving video frames.") from error
+
                 processed_frames += 1
                 if expected_samples:
                     _set_video_progress(
@@ -122,14 +198,21 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
             frame_index += 1
     finally:
         capture.release()
-        if writer is not None:
-            writer.release()
-        reset_streaming_state()
+        try:
+            _finish_h264_encoder(encoder, error_log)
+        finally:
+            reset_streaming_state()
 
     try:
         output_file = Path(worker_output_path)
         if processed_frames == 0 or not output_file.is_file() or output_file.stat().st_size == 0:
-            raise ValueError("No readable video frames were found or the MP4 encoder produced an empty file.")
+            raise ValueError("No readable video frames were found or the H.264 encoder produced an empty file.")
+
+        validation = cv2.VideoCapture(str(output_file))
+        valid_video = validation.isOpened() and int(validation.get(cv2.CAP_PROP_FRAME_COUNT)) > 0
+        validation.release()
+        if not valid_video:
+            raise ValueError("The H.264 output could not be decoded after encoding.")
 
         video_bytes = output_file.read_bytes()
         if not video_bytes:
@@ -147,7 +230,7 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
             "frames_analyzed": processed_frames,
             "duration_seconds": round(duration_seconds, 2),
             "output_fps": round(output_fps, 3),
-            "codec": codec_used or "unknown",
+            "codec": codec_used,
             "people": list(people_summary.values()),
         }
     finally:
