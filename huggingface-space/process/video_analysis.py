@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+from threading import Lock
 
 import cv2
 import numpy as np
@@ -9,9 +10,22 @@ import numpy as np
 from gpu import gpu
 from process.streaming_inference import process_stream_frame, reset_streaming_state
 
+_VIDEO_PROGRESS = {}
+_VIDEO_PROGRESS_LOCK = Lock()
+
+
+def get_video_progress(job_id: str) -> dict:
+    with _VIDEO_PROGRESS_LOCK:
+        return dict(_VIDEO_PROGRESS.get(job_id, {}))
+
+
+def _set_video_progress(job_id: str, **values) -> None:
+    with _VIDEO_PROGRESS_LOCK:
+        _VIDEO_PROGRESS.setdefault(job_id, {}).update(values)
+
 
 @gpu(duration=120)
-def analyze_video_file(input_path: str, output_path: str) -> dict:
+def analyze_video_file(input_path: str, output_path: str, job_id: str) -> dict:
     """Analyze one uploaded video in a single GPU reservation and write an annotated MP4."""
     capture = cv2.VideoCapture(input_path)
     if not capture.isOpened():
@@ -30,6 +44,8 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
     processed_frames = 0
     frame_index = 0
     people_summary = {}
+    expected_samples = (source_frames + sample_interval - 1) // sample_interval if source_frames else 0
+    _set_video_progress(job_id, stage="processing", progress=0.0, processed_frames=0, total_frames=expected_samples)
 
     reset_streaming_state()
     try:
@@ -80,6 +96,14 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
 
                 writer.write(annotated)
                 processed_frames += 1
+                if expected_samples:
+                    _set_video_progress(
+                        job_id,
+                        stage="processing",
+                        progress=min(99.0, processed_frames * 100.0 / expected_samples),
+                        processed_frames=processed_frames,
+                        total_frames=expected_samples,
+                    )
             frame_index += 1
     finally:
         capture.release()
@@ -90,6 +114,7 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
     if processed_frames == 0 or not Path(output_path).is_file() or Path(output_path).stat().st_size == 0:
         raise ValueError("No readable video frames were found.")
 
+    _set_video_progress(job_id, stage="completed", progress=100.0, processed_frames=processed_frames, total_frames=expected_samples)
     return {
         "frames_analyzed": processed_frames,
         "duration_seconds": round(duration_seconds, 2),
