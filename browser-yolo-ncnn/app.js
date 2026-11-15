@@ -148,11 +148,11 @@ function armWorkerTimeout() {
       return;
     }
     setStatus("Model loading timed out");
-    notice.textContent = workerStage + " is taking longer than 180 seconds. Check the connection, reload the page, and try again.";
+    notice.textContent = workerStage + " is taking longer than 250 seconds. Check the connection, reload the page, and try again.";
     cameraButton.disabled = true;
     imageInput.disabled = true;
     worker?.terminate();
-  }, 180000);
+  }, 250000);
 }
 
 function retrySingleThread(reason) {
@@ -214,7 +214,7 @@ function processPendingFrame() {
 async function captureCameraFrame(timestamp) {
   if (!cameraRunning) return;
 
-  if (timestamp - lastSubmittedAt >= 66 && !inferenceBusy && workerReady &&
+  if (timestamp - lastSubmittedAt >= 33 && !inferenceBusy && workerReady &&
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     lastSubmittedAt = timestamp;
     try {
