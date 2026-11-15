@@ -92,7 +92,7 @@ async function initialize(forceSingleThread = false) {
 
   const [paramBytes, binBytes] = await Promise.all([
     downloadBytes("./model/model.param", "model.param", 60000),
-    downloadBytes("./model/model.bin", "model.bin", 120000)
+    downloadBytes("./model/model.bin", "model.bin", 250000)
   ]);
 
   self.postMessage({ type: "progress", status: "Loading NCNN runtime", detail: "Both model files downloaded. Preparing the browser inference engine…" });
