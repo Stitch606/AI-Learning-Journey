@@ -171,6 +171,13 @@ async function analyzeUploadedVideo(file){
     $("#cameraBtn").disabled=true;
     const analyzed=response.headers.get("X-Frames-Analyzed")||"—";
     const duration=response.headers.get("X-Video-Duration")||"—";
+    const encodedSummary=response.headers.get("X-Action-Summary");
+    if(encodedSummary){
+      try{
+        const summary=JSON.parse(atob(encodedSummary));
+        window.ActionUI.setState({people:summary});
+      }catch(error){log("Could not read the action summary: "+error.message,"red");}
+    }
     $("#videoTitle").textContent="Video analysis complete";
     $("#videoHelp").textContent=analyzed+" frames analyzed · "+duration+" seconds of video";
     log("Analysis complete · "+analyzed+" frames processed","green");
