@@ -105,7 +105,7 @@ function stopFrameTransfer(){
   state.lastFrameAt=0;
 }
 async function camera(){if(!navigator.mediaDevices?.getUserMedia){log("Camera requires HTTPS or localhost","red");return;}try{if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:state.cameraFacing},audio:false});const v=$("#cameraVideo");v.srcObject=state.cameraStream;v.hidden=false;v.classList.remove("portrait-source");v.style.width="";v.style.height="";v.onloadedmetadata=null;await v.play();state.running=true;showMedia();log("Camera stream started","green");void startFrameTransfer();}catch(e){log("Unable to open camera: "+e.name,"red");}}
-function stopMedia(){stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
+function stopMedia(){if(videoAnalysisAbort)videoAnalysisAbort.abort();stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
 $$("[data-nav]").forEach(b=>b.addEventListener("click",()=>{state.page=b.dataset.nav;$$(".nav").forEach(n=>n.classList.toggle("active",n===b));$("#sidebar").classList.remove("open");if(state.cameraStream||state.videoUrl)stopMedia();showEmpty();}));
 $("#mobileMenu").addEventListener("click",()=>$("#sidebar").classList.toggle("open"));
 $("#themeToggle").addEventListener("click",()=>setTheme(state.theme==="dark"?"light":"dark"));
@@ -114,8 +114,78 @@ $("#openCameraBtn").addEventListener("click",camera);
 $("#chooseVideoBtn").addEventListener("click",()=>$("#videoUpload").click());
 $("#cameraBtn").addEventListener("click",()=>{state.cameraFacing=state.cameraFacing==="environment"?"user":"environment";camera();});
 $("#stopBtn").addEventListener("click",()=>{stopMedia();log("Stream stopped","red");});
-$("#pauseBtn").addEventListener("click",()=>{const v=$("#cameraVideo");if(!state.cameraStream&&!state.videoUrl)return;state.paused=!state.paused;if(state.paused){v.pause();stopFrameTransfer();}else{v.play();if(state.running)void startFrameTransfer();}$("#pauseBtn").textContent=state.paused?"▶　Resume":"Ⅱ　Pause";});
-$("#videoUpload").addEventListener("change",e=>{const f=e.target.files?.[0];if(!f)return;stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=URL.createObjectURL(f);const v=$("#cameraVideo");v.classList.remove("portrait-source");v.style.width="";v.style.height="";v.onloadedmetadata=null;v.srcObject=null;v.src=state.videoUrl;v.hidden=false;v.onloadeddata=()=>{v.play();state.running=true;showMedia();$("#cameraBtn").disabled=true;void startFrameTransfer();};log("Video loaded: "+f.name,"green");e.target.value="";});
+$("#pauseBtn").addEventListener("click",()=>{const v=$("#cameraVideo");if(!state.cameraStream&&!state.videoUrl)return;state.paused=!state.paused;if(state.paused){v.pause();if(state.cameraStream)stopFrameTransfer();}else{v.play();if(state.cameraStream&&state.running)void startFrameTransfer();}$("#pauseBtn").textContent=state.paused?"▶　Resume":"Ⅱ　Pause";});
+let videoAnalysisAbort=null;
+async function analyzeUploadedVideo(file){
+  stopFrameTransfer();
+  if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());
+  state.cameraStream=null;
+  if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);
+  state.videoUrl=null;
+  state.running=false;
+  state.paused=false;
+  stopRuntime(true);
+  const video=$("#cameraVideo");
+  video.pause();
+  video.srcObject=null;
+  video.classList.remove("portrait-source");
+  video.style.width="";
+  video.style.height="";
+  video.hidden=false;
+  const previewUrl=URL.createObjectURL(file);
+  video.src=previewUrl;
+  await video.play().catch(()=>{});
+  video.pause();
+  $("#videoEmpty").hidden=true;
+  $("#liveBadge").hidden=false;
+  $("#liveBadge").textContent="ANALYZING";
+  $("#fpsBadge").hidden=true;
+  $("#stopBtn").disabled=false;
+  $("#pauseBtn").disabled=true;
+  $("#cameraBtn").disabled=true;
+  $("#videoTitle").textContent="Analyzing video";
+  $("#videoHelp").textContent="YOLO Pose and ST-GCN++ are processing the uploaded video. Keep this page open.";
+  log("Video uploaded: "+file.name+" · analysis started","green");
+  videoAnalysisAbort=new AbortController();
+  try{
+    const form=new FormData();
+    form.append("file",file,file.name);
+    const response=await fetch("/api/analyze-video",{method:"POST",body:form,signal:videoAnalysisAbort.signal});
+    if(!response.ok){
+      let message="Video analysis failed ("+response.status+")";
+      try{const body=await response.json();message=body.detail||body.message||message;}catch{}
+      throw new Error(message);
+    }
+    const outputBlob=await response.blob();
+    if(!outputBlob.size)throw new Error("The analysis returned an empty video.");
+    URL.revokeObjectURL(previewUrl);
+    state.videoUrl=URL.createObjectURL(outputBlob);
+    video.src=state.videoUrl;
+    video.load();
+    await video.play().catch(()=>{});
+    state.running=true;
+    showMedia();
+    $("#liveBadge").textContent="ANALYZED";
+    $("#fpsBadge").hidden=true;
+    $("#pauseBtn").disabled=false;
+    $("#cameraBtn").disabled=true;
+    const analyzed=response.headers.get("X-Frames-Analyzed")||"—";
+    const duration=response.headers.get("X-Video-Duration")||"—";
+    $("#videoTitle").textContent="Video analysis complete";
+    $("#videoHelp").textContent=analyzed+" frames analyzed · "+duration+" seconds of video";
+    log("Analysis complete · "+analyzed+" frames processed","green");
+  }catch(error){
+    URL.revokeObjectURL(previewUrl);
+    if(error.name!=="AbortError")log("Video analysis error: "+error.message,"red");
+    state.running=false;
+    showEmpty();
+    $("#videoTitle").textContent="Video analysis failed";
+    $("#videoHelp").textContent=error.message;
+  }finally{
+    videoAnalysisAbort=null;
+  }
+}
+$("#videoUpload").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)void analyzeUploadedVideo(f);e.target.value="";});
 $("#fullscreenBtn").addEventListener("click",()=>document.fullscreenElement?document.exitFullscreen():$("#videoFrame").requestFullscreen?.());
 $("#clearLog").addEventListener("click",()=>$("#logList").replaceChildren());
 $("#viewAll").addEventListener("click",()=>log("Showing "+state.people.length+" detected people"));
