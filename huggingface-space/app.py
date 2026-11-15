@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 import os
 import tempfile
+import base64
+import json
 from struct import unpack_from
 from time import perf_counter
 
@@ -92,6 +94,7 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                 "X-Video-Duration": str(result["duration_seconds"]),
                 "X-Analysis-FPS": str(result["output_fps"]),
                 "X-Video-Codec": result["codec"],
+                "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
             },
             background=BackgroundTask(cleanup),
         )
