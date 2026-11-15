@@ -202,7 +202,8 @@ async def get_video_analysis_status(job_id: str):
         }
     return job
 
-\n@app.get("/api/analyze-video/{job_id}/result")
+
+@app.get("/api/analyze-video/{job_id}/result")
 async def get_video_analysis_result(job_id: str):
     """Serve the analyzed MP4 directly to the browser's native video player."""
     with _VIDEO_JOBS_LOCK:
