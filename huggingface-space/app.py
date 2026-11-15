@@ -168,6 +168,8 @@ async def get_video_analysis_status(job_id: str):
         raise HTTPException(status_code=404, detail="Video analysis job was not found.")
     if job.get("status") == "processing" and job.get("progress_path"):
         job.update(get_video_progress(job["progress_path"]))
+    job.pop("output_path", None)
+    job.pop("progress_path", None)
     result = job.pop("result", None)
     if result:
         job["result"] = {
