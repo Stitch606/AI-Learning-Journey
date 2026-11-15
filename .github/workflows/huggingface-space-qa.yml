@@ -13,7 +13,7 @@ permissions:
 jobs:
   space-qa:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,6 +64,79 @@ jobs:
           assert result["model_connected"] is True, result
           assert result["annotated_frame"].startswith("data:image/jpeg;base64,"), result
           print("Gradio PIL -> NumPy frame API passed:", result)
+          PY
+      - name: Test complete video upload, processing, and result download
+        run: |
+          python - <<'PY'
+          import time
+          import tempfile
+          from pathlib import Path
+
+          import cv2
+          import numpy as np
+          import requests
+
+          base = "http://127.0.0.1:7860"
+          with tempfile.TemporaryDirectory() as folder:
+              source = Path(folder) / "integration-test.mp4"
+              writer = cv2.VideoWriter(
+                  str(source),
+                  cv2.VideoWriter_fourcc(*"mp4v"),
+                  12.0,
+                  (320, 240),
+              )
+              assert writer.isOpened(), "Could not create the integration test video"
+              for index in range(24):
+                  frame = np.zeros((240, 320, 3), dtype=np.uint8)
+                  cv2.rectangle(frame, (20 + index * 3, 30), (100 + index * 3, 210), (40, 150, 230), -1)
+                  cv2.putText(frame, f"FRAME {index}", (20, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                  writer.write(frame)
+              writer.release()
+
+              with source.open("rb") as video:
+                  uploaded = requests.post(
+                      base + "/api/analyze-video",
+                      files={"file": (source.name, video, "video/mp4")},
+                      timeout=60,
+                  )
+              assert uploaded.status_code == 202, (uploaded.status_code, uploaded.text)
+              job_id = uploaded.json()["job_id"]
+              deadline = time.time() + 240
+              last_stage = None
+              while time.time() < deadline:
+                  response = requests.get(base + f"/api/analyze-video/{job_id}", timeout=20)
+                  assert response.ok, (response.status_code, response.text)
+                  status = response.json()
+                  if status.get("stage") != last_stage:
+                      print("Video job stage:", status.get("stage"), "progress:", status.get("progress"))
+                      last_stage = status.get("stage")
+                  if status["status"] == "failed":
+                      raise AssertionError("Video analysis failed: " + status.get("error", "unknown error"))
+                  if status["status"] == "completed":
+                      break
+                  time.sleep(1)
+              else:
+                  raise AssertionError("Video analysis did not complete within 240 seconds")
+
+              assert status.get("output_ready") is True, status
+              result = requests.get(base + f"/api/analyze-video/{job_id}/result", timeout=60)
+              assert result.status_code == 200, (result.status_code, result.text[:1000])
+              assert result.headers.get("content-type", "").startswith("video/mp4"), result.headers
+              assert len(result.content) > 1000, f"Output video is too small: {len(result.content)} bytes"
+              output = Path(folder) / "annotated-result.mp4"
+              output.write_bytes(result.content)
+              capture = cv2.VideoCapture(str(output))
+              assert capture.isOpened(), "Downloaded result is not a readable MP4"
+              output_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+              capture.release()
+              assert output_frames > 0, "Downloaded result contains no frames"
+              assert status["result"]["frames_analyzed"] == output_frames, status
+              print("Full video pipeline passed:", {
+                  "input_bytes": source.stat().st_size,
+                  "output_bytes": len(result.content),
+                  "output_frames": output_frames,
+                  "codec": status["result"]["codec"],
+              })
           PY
       - name: Capture and test desktop/mobile UI
         run: |
