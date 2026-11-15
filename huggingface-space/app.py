@@ -21,7 +21,7 @@ from PIL import Image
 from gpu import gpu, gpu_ready
 from process.streaming_inference import process_stream_frame, reset_streaming_state
 from process.yolo_only import process_yolo_frame
-from process.video_analysis import process_video_chunk
+from process.video_analysis import analyze_video_file
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,7 +51,7 @@ async def health():
 
 @app.post("/api/analyze-video")
 async def analyze_video_upload(file: UploadFile = File(...)):
-    """Upload a video, analyze sampled frames with YOLO + ST-GCN++, and return an annotated MP4."""
+    """Upload a video, analyze it with YOLO + ST-GCN++, and return an annotated MP4."""
     filename = (file.filename or "video").lower()
     if not filename.endswith((".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")):
         raise HTTPException(status_code=415, detail="Upload an MP4, MOV, M4V, AVI, MKV, or WebM video.")
@@ -74,87 +74,7 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                     raise HTTPException(status_code=413, detail="Video is larger than the 512 MB demo limit.")
                 destination.write(part)
 
-        capture = cv2.VideoCapture(input_path)
-        if not capture.isOpened():
-            raise HTTPException(status_code=400, detail="The uploaded video could not be opened.")
-
-        source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-        if not source_fps or source_fps < 1 or source_fps > 240:
-            source_fps = 30.0
-        source_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        duration_seconds = source_frames / source_fps if source_frames else 0.0
-
-        # Sample at up to 6 frames/second to keep the demo practical while preserving video duration.
-        sample_interval = max(1, round(source_fps / 6.0))
-        output_fps = source_fps / sample_interval
-        chunk = []
-        frame_index = 0
-        processed_frames = 0
-        writer = None
-        codec_used = None
-
-        reset_streaming_state()
-        try:
-            while True:
-                ok, bgr = capture.read()
-                if not ok:
-                    break
-                if frame_index % sample_interval == 0:
-                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                    chunk.append(rgb)
-                    if len(chunk) >= 90:
-                        rendered_frames = process_video_chunk(chunk)
-                        if writer is None and rendered_frames:
-                            height, width = rendered_frames[0].shape[:2]
-                            for codec in ("avc1", "mp4v"):
-                                candidate = cv2.VideoWriter(
-                                    output_path,
-                                    cv2.VideoWriter_fourcc(*codec),
-                                    output_fps,
-                                    (width, height),
-                                )
-                                if candidate.isOpened():
-                                    writer = candidate
-                                    codec_used = codec
-                                    break
-                                candidate.release()
-                            if writer is None:
-                                raise RuntimeError("No MP4 video encoder is available on this Space.")
-                        for rendered in rendered_frames:
-                            writer.write(rendered)
-                        processed_frames += len(rendered_frames)
-                        chunk.clear()
-                frame_index += 1
-
-            if chunk:
-                rendered_frames = process_video_chunk(chunk)
-                if writer is None and rendered_frames:
-                    height, width = rendered_frames[0].shape[:2]
-                    for codec in ("avc1", "mp4v"):
-                        candidate = cv2.VideoWriter(
-                            output_path,
-                            cv2.VideoWriter_fourcc(*codec),
-                            output_fps,
-                            (width, height),
-                        )
-                        if candidate.isOpened():
-                            writer = candidate
-                            codec_used = codec
-                            break
-                        candidate.release()
-                    if writer is None:
-                        raise RuntimeError("No MP4 video encoder is available on this Space.")
-                for rendered in rendered_frames:
-                    writer.write(rendered)
-                processed_frames += len(rendered_frames)
-        finally:
-            capture.release()
-            if writer is not None:
-                writer.release()
-            reset_streaming_state()
-
-        if processed_frames == 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
-            raise HTTPException(status_code=422, detail="No readable video frames were found.")
+        result = analyze_video_file(input_path, output_path)
 
         def cleanup():
             for path in (input_path, output_path):
@@ -168,10 +88,10 @@ async def analyze_video_upload(file: UploadFile = File(...)):
             media_type="video/mp4",
             filename="human-action-analysis.mp4",
             headers={
-                "X-Frames-Analyzed": str(processed_frames),
-                "X-Video-Duration": f"{duration_seconds:.2f}",
-                "X-Analysis-FPS": f"{output_fps:.3f}",
-                "X-Video-Codec": codec_used or "unknown",
+                "X-Frames-Analyzed": str(result["frames_analyzed"]),
+                "X-Video-Duration": str(result["duration_seconds"]),
+                "X-Analysis-FPS": str(result["output_fps"]),
+                "X-Video-Codec": result["codec"],
             },
             background=BackgroundTask(cleanup),
         )
