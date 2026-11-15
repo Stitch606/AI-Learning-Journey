@@ -10,8 +10,8 @@ function startRuntime(){if(runtimeStartedAt!==null)return;runtimeStartedAt=Date.
 function stopRuntime(reset=false){if(runtimeStartedAt!==null){runtimeElapsed+=Math.floor((Date.now()-runtimeStartedAt)/1000);runtimeStartedAt=null;}if(reset){runtimeElapsed=0;if(runtimeTicker){clearInterval(runtimeTicker);runtimeTicker=null;}}updateRuntime();}
 function render(){const p=state.people;$("#resultsBody").innerHTML=p.map(x=>'<tr><td>'+x.id+'</td><td><i class="dot '+(x.color||"blue")+'"></i>'+x.person+'</td><td>'+x.action+'</td><td>'+ (state.settings.showConfidence?Number(x.confidence).toFixed(2):"—")+'</td><td>'+x.time+'</td></tr>').join("")||'<tr><td colspan="5" class="no-data">No detections yet</td></tr>';$("#peopleCount").textContent=state.settings.detectPeople?p.length:0;$("#actionCount").textContent=state.settings.recognizeActions?new Set(p.map(x=>x.action)).size:0;$("#totalActions").textContent=state.settings.recognizeActions?p.length:0;}
 function log(message,color="blue"){const row=document.createElement("p");row.innerHTML='<i class="'+color+'"></i>'+new Date().toLocaleTimeString("en-GB")+"　"+message;$("#logList").prepend(row);while($("#logList").children.length>8)$("#logList").lastElementChild.remove();}
-function showEmpty(){const video=$("#cameraVideo");video.pause();video.srcObject=null;video.removeAttribute("src");video.hidden=true;const overlay=$("#inferenceOverlay");overlay.hidden=true;overlay.removeAttribute("src");$("#videoEmpty").hidden=false;$("#liveBadge").hidden=true;$("#fpsBadge").hidden=true;$("#openCameraBtn").hidden=state.page==="Video Analysis";$("#chooseVideoBtn").hidden=state.page!=="Video Analysis";$("#videoEyebrow").textContent=state.page==="Dashboard"?"LIVE DETECTION":"VIDEO ANALYSIS";$("#videoTitle").textContent=state.page==="Dashboard"?"Ready to monitor":"Choose a video to analyse";$("#videoHelp").textContent=state.page==="Dashboard"?"Start your camera to begin real-time action recognition.":"Upload a video file to inspect actions and detected people.";$("#stopBtn").disabled=true;$("#pauseBtn").disabled=true;$("#cameraBtn").disabled=true;}
-function showMedia(){startRuntime();$("#videoEmpty").hidden=true;$("#liveBadge").hidden=false;$("#fpsBadge").hidden=false;$("#stopBtn").disabled=false;$("#pauseBtn").disabled=false;$("#cameraBtn").disabled=!state.cameraStream;}
+function showEmpty(){$("#analysisProgress").hidden=true;const video=$("#cameraVideo");video.pause();video.srcObject=null;video.removeAttribute("src");video.hidden=true;const overlay=$("#inferenceOverlay");overlay.hidden=true;overlay.removeAttribute("src");$("#videoEmpty").hidden=false;$("#liveBadge").hidden=true;$("#fpsBadge").hidden=true;$("#openCameraBtn").hidden=state.page==="Video Analysis";$("#chooseVideoBtn").hidden=state.page!=="Video Analysis";$("#videoEyebrow").textContent=state.page==="Dashboard"?"LIVE DETECTION":"VIDEO ANALYSIS";$("#videoTitle").textContent=state.page==="Dashboard"?"Ready to monitor":"Choose a video to analyse";$("#videoHelp").textContent=state.page==="Dashboard"?"Start your camera to begin real-time action recognition.":"Upload a video file to inspect actions and detected people.";$("#stopBtn").disabled=true;$("#pauseBtn").disabled=true;$("#cameraBtn").disabled=true;}
+function showMedia(){$("#analysisProgress").hidden=true;startRuntime();$("#videoEmpty").hidden=true;$("#liveBadge").hidden=false;$("#fpsBadge").hidden=false;$("#stopBtn").disabled=false;$("#pauseBtn").disabled=false;$("#cameraBtn").disabled=!state.cameraStream;}
 render();showEmpty();
 
 window.ActionUI={getState:()=>({...state,cameraStream:null,videoUrl:null,bridge:null}),setState(payload={}){const overlay=$("#inferenceOverlay");if(typeof payload.annotated_frame==="string"){overlay.src=payload.annotated_frame;overlay.hidden=false;}else{overlay.hidden=true;overlay.removeAttribute("src");}if(typeof payload.fps==="number"){$("#fpsValue").textContent=payload.fps.toFixed(1);$("#statFps").textContent=payload.fps.toFixed(1);}if(Array.isArray(payload.people)){state.people=payload.people.map((p,i)=>({id:p.id??i+1,person:p.person??"Person "+(i+1),action:p.action??"Unknown",confidence:Number(p.confidence??0),time:p.time??new Date().toLocaleTimeString("en-GB"),color:p.color??["green","blue","red","purple","cyan"][i%5]}));render();}if(typeof payload.running==="boolean"){state.running=payload.running;$("#liveBadge").hidden=!payload.running;}if(typeof payload.modelStatus==="string")if($("#engineStatusText"))$("#engineStatusText").textContent=payload.modelStatus;if(Array.isArray(payload.logs))$("#logList").replaceChildren(...payload.logs.map(x=>{const p=document.createElement("p");p.textContent=x.text??String(x);return p;}));if(payload.statistics)for(const [k,v] of Object.entries(payload.statistics)){const el=document.getElementById(k);if(el)el.textContent=v;}},setTheme,addLog:log};
@@ -105,7 +105,7 @@ function stopFrameTransfer(){
   state.lastFrameAt=0;
 }
 async function camera(){if(!navigator.mediaDevices?.getUserMedia){log("Camera requires HTTPS or localhost","red");return;}try{if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:state.cameraFacing},audio:false});const v=$("#cameraVideo");v.srcObject=state.cameraStream;v.hidden=false;v.classList.remove("portrait-source");v.style.width="";v.style.height="";v.onloadedmetadata=null;await v.play();state.running=true;showMedia();log("Camera stream started","green");void startFrameTransfer();}catch(e){log("Unable to open camera: "+e.name,"red");}}
-function stopMedia(){if(videoAnalysisAbort)videoAnalysisAbort.abort();stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
+function stopMedia(){if(videoAnalysisAbort)videoAnalysisAbort.abort();if(videoUploadRequest)videoUploadRequest.abort();stopRuntime(true);stopFrameTransfer();if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());state.cameraStream=null;if(state.videoUrl)URL.revokeObjectURL(state.videoUrl);state.videoUrl=null;state.running=false;state.paused=false;$("#pauseBtn").textContent="Ⅱ　Pause";showEmpty();}
 $$("[data-nav]").forEach(b=>b.addEventListener("click",()=>{state.page=b.dataset.nav;$$(".nav").forEach(n=>n.classList.toggle("active",n===b));$("#sidebar").classList.remove("open");if(state.cameraStream||state.videoUrl)stopMedia();showEmpty();}));
 $("#mobileMenu").addEventListener("click",()=>$("#sidebar").classList.toggle("open"));
 $("#themeToggle").addEventListener("click",()=>setTheme(state.theme==="dark"?"light":"dark"));
@@ -115,7 +115,62 @@ $("#chooseVideoBtn").addEventListener("click",()=>$("#videoUpload").click());
 $("#cameraBtn").addEventListener("click",()=>{state.cameraFacing=state.cameraFacing==="environment"?"user":"environment";camera();});
 $("#stopBtn").addEventListener("click",()=>{stopMedia();log("Stream stopped","red");});
 $("#pauseBtn").addEventListener("click",()=>{const v=$("#cameraVideo");if(!state.cameraStream&&!state.videoUrl)return;state.paused=!state.paused;if(state.paused){v.pause();if(state.cameraStream)stopFrameTransfer();}else{v.play();if(state.cameraStream&&state.running)void startFrameTransfer();}$("#pauseBtn").textContent=state.paused?"▶　Resume":"Ⅱ　Pause";});
-let videoAnalysisAbort=null;
+let videoAnalysisAbort=null,videoUploadRequest=null;
+function updateAnalysisProgress(stage,percent,detail){
+  const panel=$("#analysisProgress");
+  panel.hidden=false;
+  panel.classList.toggle("processing",stage==="processing");
+  panel.classList.toggle("queued",stage==="queued");
+  $("#analysisProgressTitle").textContent=stage==="upload"?"Uploading video":stage==="queued"?"Upload complete · waiting for GPU":"AI processing video";
+  $("#analysisProgressValue").textContent=Number.isFinite(percent)?Math.round(percent)+"%":"…";
+  $("#analysisProgressBar").style.width=Number.isFinite(percent)?Math.max(0,Math.min(100,percent))+"%":"32%";
+  $("#analysisProgressDetail").textContent=detail;
+  $("#uploadStage").className=stage==="upload"?"active":"done";
+  $("#processingStage").className=stage==="processing"||stage==="queued"?"active":stage==="complete"?"done":"";
+}
+function uploadVideoFile(file){
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    videoUploadRequest=xhr;
+    xhr.open("POST","/api/analyze-video");
+    xhr.responseType="json";
+    xhr.timeout=300000;
+    xhr.upload.onprogress=event=>{
+      if(event.lengthComputable){
+        const percent=event.total?event.loaded/event.total*100:0;
+        updateAnalysisProgress("upload",percent,"Uploading "+(file.size/1048576).toFixed(1)+" MB · "+Math.round(percent)+"% sent");
+      }else updateAnalysisProgress("upload",null,"Uploading video…");
+    };
+    xhr.onload=()=>{
+      videoUploadRequest=null;
+      if(xhr.status>=200&&xhr.status<300&&xhr.response?.job_id)resolve(xhr.response);
+      else reject(new Error(xhr.response?.detail||"Video upload failed ("+xhr.status+")"));
+    };
+    xhr.onerror=()=>{videoUploadRequest=null;reject(new Error("Network error while uploading the video."));};
+    xhr.ontimeout=()=>{videoUploadRequest=null;reject(new Error("Video upload timed out. Please try again."));};
+    xhr.onabort=()=>{videoUploadRequest=null;reject(new DOMException("Upload cancelled","AbortError"));};
+    const form=new FormData();
+    form.append("file",file,file.name);
+    xhr.send(form);
+  });
+}
+async function waitForVideoJob(jobId,signal){
+  while(true){
+    const response=await fetch("/api/analyze-video/"+encodeURIComponent(jobId),{signal});
+    const status=await response.json();
+    if(!response.ok)throw new Error(status.detail||"Could not read video analysis status.");
+    if(status.status==="failed")throw new Error(status.error||"Video processing failed.");
+    if(status.status==="completed")return status.result;
+    if(status.status==="queued"){
+      updateAnalysisProgress("queued",null,"Upload complete · waiting for the GPU worker…");
+    }else{
+      const percent=Number(status.progress);
+      const count=status.total_frames?status.processed_frames+" / "+status.total_frames+" sampled frames":"Processing sampled frames…";
+      updateAnalysisProgress("processing",Number.isFinite(percent)?percent:null,count);
+    }
+    await new Promise(resolve=>setTimeout(resolve,1200));
+  }
+}
 async function analyzeUploadedVideo(file){
   stopFrameTransfer();
   if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());
@@ -138,22 +193,27 @@ async function analyzeUploadedVideo(file){
   video.pause();
   $("#videoEmpty").hidden=true;
   $("#liveBadge").hidden=false;
-  $("#liveBadge").textContent="ANALYZING";
+  $("#liveBadge").textContent="UPLOADING";
   $("#fpsBadge").hidden=true;
   $("#stopBtn").disabled=false;
   $("#pauseBtn").disabled=true;
   $("#cameraBtn").disabled=true;
-  $("#videoTitle").textContent="Analyzing video";
-  $("#videoHelp").textContent="YOLO Pose and ST-GCN++ are processing the uploaded video. Keep this page open.";
-  log("Video uploaded: "+file.name+" · analysis started","green");
+  $("#videoTitle").textContent="Uploading video";
+  $("#videoHelp").textContent="The upload and AI processing stages will be shown below.";
+  updateAnalysisProgress("upload",0,"Preparing "+file.name+"…");
+  log("Video selected: "+file.name+" · upload started","green");
   videoAnalysisAbort=new AbortController();
   try{
-    const form=new FormData();
-    form.append("file",file,file.name);
-    const response=await fetch("/api/analyze-video",{method:"POST",body:form,signal:videoAnalysisAbort.signal});
+    const job=await uploadVideoFile(file);
+    $("#liveBadge").textContent="PROCESSING";
+    $("#videoTitle").textContent="AI analysis in progress";
+    log("Upload complete · background analysis started","green");
+    const result=await waitForVideoJob(job.job_id,videoAnalysisAbort.signal);
+    updateAnalysisProgress("complete",100,"Analysis complete · downloading the annotated video…");
+    const response=await fetch("/api/analyze-video/"+encodeURIComponent(job.job_id)+"/result",{signal:videoAnalysisAbort.signal});
     if(!response.ok){
-      let message="Video analysis failed ("+response.status+")";
-      try{const body=await response.json();message=body.detail||body.message||message;}catch{}
+      let message="Could not download the analyzed video ("+response.status+")";
+      try{const body=await response.json();message=body.detail||message;}catch{}
       throw new Error(message);
     }
     const outputBlob=await response.blob();
@@ -169,27 +229,20 @@ async function analyzeUploadedVideo(file){
     $("#fpsBadge").hidden=true;
     $("#pauseBtn").disabled=false;
     $("#cameraBtn").disabled=true;
-    const analyzed=response.headers.get("X-Frames-Analyzed")||"—";
-    const duration=response.headers.get("X-Video-Duration")||"—";
-    const encodedSummary=response.headers.get("X-Action-Summary");
-    if(encodedSummary){
-      try{
-        const summary=JSON.parse(atob(encodedSummary));
-        window.ActionUI.setState({people:summary});
-      }catch(error){log("Could not read the action summary: "+error.message,"red");}
-    }
+    if(Array.isArray(result?.people))window.ActionUI.setState({people:result.people});
     $("#videoTitle").textContent="Video analysis complete";
-    $("#videoHelp").textContent=analyzed+" frames analyzed · "+duration+" seconds of video";
-    log("Analysis complete · "+analyzed+" frames processed","green");
+    $("#videoHelp").textContent=result.frames_analyzed+" frames analyzed · "+result.duration_seconds+" seconds of video";
+    log("Analysis complete · "+result.frames_analyzed+" frames processed","green");
   }catch(error){
     URL.revokeObjectURL(previewUrl);
     if(error.name!=="AbortError")log("Video analysis error: "+error.message,"red");
     state.running=false;
     showEmpty();
-    $("#videoTitle").textContent="Video analysis failed";
-    $("#videoHelp").textContent=error.message;
+    $("#videoTitle").textContent=error.name==="AbortError"?"Analysis cancelled":"Video analysis failed";
+    $("#videoHelp").textContent=error.name==="AbortError"?"The video analysis was cancelled.":error.message;
   }finally{
     videoAnalysisAbort=null;
+    videoUploadRequest=null;
   }
 }
 $("#videoUpload").addEventListener("change",e=>{const f=e.target.files?.[0];if(f)void analyzeUploadedVideo(f);e.target.value="";});
