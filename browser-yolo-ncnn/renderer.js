@@ -31,15 +31,18 @@ export class PoseRenderer {
     this.sourceWidth = 0;
     this.sourceHeight = 0;
     this.running = true;
-    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.renderScheduled = false;
+    this.resizeObserver = new ResizeObserver(() => {
+      this.resize();
+      this.scheduleRender();
+    });
     this.resizeObserver.observe(canvas);
     this.resize();
-    this.animationFrame = requestAnimationFrame(() => this.renderLoop());
   }
 
   resize() {
     const rect = this.canvas.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const width = Math.max(1, Math.round(rect.width * dpr));
     const height = Math.max(1, Math.round(rect.height * dpr));
 
@@ -54,6 +57,9 @@ export class PoseRenderer {
   }
 
   clear() {
+    this.latestDetections = [];
+    this.sourceWidth = 0;
+    this.sourceHeight = 0;
     this.resize();
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
@@ -95,12 +101,16 @@ export class PoseRenderer {
     this.latestDetections = Array.isArray(detections) ? detections : [];
     this.sourceWidth = sourceWidth || 0;
     this.sourceHeight = sourceHeight || 0;
+    this.scheduleRender();
   }
 
-  renderLoop() {
-    if (!this.running) return;
-    this.renderFrame();
-    this.animationFrame = requestAnimationFrame(() => this.renderLoop());
+  scheduleRender() {
+    if (!this.running || this.renderScheduled) return;
+    this.renderScheduled = true;
+    requestAnimationFrame(() => {
+      this.renderScheduled = false;
+      if (this.running) this.renderFrame();
+    });
   }
 
   renderFrame() {
@@ -214,7 +224,6 @@ export class PoseRenderer {
 
   destroy() {
     this.running = false;
-    cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.smoothed.clear();
     this.latestDetections = [];
