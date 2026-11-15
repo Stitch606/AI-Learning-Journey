@@ -107,7 +107,7 @@ function launchWorker(forceSingleThread = false) {
     }
 
     if (message.type === "error") {
-      if (!usingSingleThreadFallback && message.stage !== "frame") {
+      if (!usingSingleThreadFallback && message.stage !== "frame" && message.stage !== "model") {
         retrySingleThread(message.message);
         return;
       }
