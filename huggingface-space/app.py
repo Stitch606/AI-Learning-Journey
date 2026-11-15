@@ -18,7 +18,7 @@ import gradio as gr
 import numpy as np
 import cv2
 from fastapi import File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -162,30 +162,47 @@ async def get_video_analysis_result(job_id: str):
             raise HTTPException(status_code=409, detail="The analyzed video is not ready yet.")
         output_path = job.get("output_path")
         result = job.get("result")
-    if not output_path:
-        raise HTTPException(status_code=404, detail="The analyzed video file is unavailable.")
 
-    def cleanup():
-        for path in (output_path,):
+    if not output_path or not os.path.isfile(output_path):
+        raise HTTPException(
+            status_code=500,
+            detail="Analysis finished, but the output video file is missing on the Space server.",
+        )
+
+    file_size = os.path.getsize(output_path)
+    if file_size <= 0:
+        raise HTTPException(status_code=500, detail="The analyzed video file is empty.")
+
+    headers = {
+        "Content-Length": str(file_size),
+        "Accept-Ranges": "none",
+        "X-Frames-Analyzed": str(result["frames_analyzed"]),
+        "X-Video-Duration": str(result["duration_seconds"]),
+        "X-Analysis-FPS": str(result["output_fps"]),
+        "X-Video-Codec": result["codec"],
+        "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
+    }
+
+    def stream_and_cleanup():
+        try:
+            with open(output_path, "rb") as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
             try:
-                os.remove(path)
+                os.remove(output_path)
             except FileNotFoundError:
                 pass
-        with _VIDEO_JOBS_LOCK:
-            _VIDEO_JOBS.pop(job_id, None)
+            with _VIDEO_JOBS_LOCK:
+                _VIDEO_JOBS.pop(job_id, None)
 
-    return FileResponse(
-        output_path,
+    return StreamingResponse(
+        stream_and_cleanup(),
         media_type="video/mp4",
-        filename="human-action-analysis.mp4",
-        headers={
-            "X-Frames-Analyzed": str(result["frames_analyzed"]),
-            "X-Video-Duration": str(result["duration_seconds"]),
-            "X-Analysis-FPS": str(result["output_fps"]),
-            "X-Video-Codec": result["codec"],
-            "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
-        },
-        background=BackgroundTask(cleanup),
+        headers=headers,
     )
 
 
