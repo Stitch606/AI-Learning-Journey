@@ -18,7 +18,7 @@ import gradio as gr
 import numpy as np
 import cv2
 from fastapi import File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -211,26 +211,23 @@ async def get_video_analysis_result(job_id: str):
         "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
     }
 
-    def stream_and_cleanup():
+    def cleanup_video_result():
         try:
-            with open(output_path, "rb") as source:
-                while True:
-                    chunk = source.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-        finally:
-            try:
-                os.remove(output_path)
-            except FileNotFoundError:
-                pass
-            with _VIDEO_JOBS_LOCK:
-                _VIDEO_JOBS.pop(job_id, None)
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+        with _VIDEO_JOBS_LOCK:
+            _VIDEO_JOBS.pop(job_id, None)
 
-    return StreamingResponse(
-        stream_and_cleanup(),
+    # FileResponse lets Starlette serve the MP4 as a normal file response with
+    # a known Content-Length and efficient chunking. This is more reliable
+    # behind Hugging Face's reverse proxy than a hand-written StreamingResponse.
+    return FileResponse(
+        path=output_path,
         media_type="video/mp4",
+        filename="analyzed-video.mp4",
         headers=headers,
+        background=BackgroundTask(cleanup_video_result),
     )
 
 
