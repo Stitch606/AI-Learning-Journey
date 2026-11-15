@@ -21,26 +21,81 @@ function allocateCString(value) {
   return pointer;
 }
 
-async function initialize(forceSingleThread = false) {
-  self.postMessage({ type: "progress", status: "Loading model files", detail: "Downloading the NCNN model configuration and weights…" });
-  const configResponse = await fetch("./model/model-config.json");
-  if (!configResponse.ok) throw new Error("Model configuration was not found.");
-  config = await configResponse.json();
+async function downloadBytes(url, label, timeoutMs = 120000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    self.postMessage({ type: "progress", status: "Downloading " + label, detail: "Connecting to the model file…" });
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      const error = new Error(label + " download failed (HTTP " + response.status + ").");
+      error.stage = "model";
+      throw error;
+    }
+    if (!response.body) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!bytes.length) throw new Error(label + " downloaded as an empty file.");
+      return bytes;
+    }
 
-  const [paramResponse, binResponse] = await Promise.all([
-    fetch("./model/model.param"),
-    fetch("./model/model.bin")
-  ]);
-  if (!paramResponse.ok || !binResponse.ok) {
-    throw new Error("The exported YOLO26n-Pose NCNN files are missing.");
+    const reader = response.body.getReader();
+    const chunks = [];
+    const total = Number(response.headers.get("content-length")) || 0;
+    let loaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      const received = (loaded / 1048576).toFixed(2);
+      const expected = total ? " / " + (total / 1048576).toFixed(2) + " MB" : "";
+      self.postMessage({
+        type: "progress",
+        status: "Downloading " + label,
+        detail: label + ": " + received + " MB" + expected
+      });
+    }
+    if (!loaded) throw new Error(label + " downloaded as an empty file.");
+    const bytes = new Uint8Array(loaded);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const timeoutError = new Error(label + " download timed out after " + Math.round(timeoutMs / 1000) + " seconds.");
+      timeoutError.stage = "model";
+      throw timeoutError;
+    }
+    if (!error.stage) error.stage = "model";
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function initialize(forceSingleThread = false) {
+  self.postMessage({ type: "progress", status: "Loading model configuration", detail: "Reading the model input and output settings…" });
+  let configBytes;
+  try {
+    configBytes = await downloadBytes("./model/model-config.json", "model configuration", 30000);
+    config = JSON.parse(new TextDecoder().decode(configBytes));
+  } catch (error) {
+    error.stage = "model";
+    throw error;
   }
 
   const [paramBytes, binBytes] = await Promise.all([
-    paramResponse.arrayBuffer(),
-    binResponse.arrayBuffer()
+    downloadBytes("./model/model.param", "model.param", 60000),
+    downloadBytes("./model/model.bin", "model.bin", 120000)
   ]);
 
-  self.postMessage({ type: "progress", status: "Loading NCNN runtime", detail: "Model files downloaded. Preparing the browser inference engine…" });
+  self.postMessage({ type: "progress", status: "Loading NCNN runtime", detail: "Both model files downloaded. Preparing the browser inference engine…" });
   const canUseThreads = !forceSingleThread && self.crossOriginIsolated &&
     typeof SharedArrayBuffer !== "undefined";
   const runtimeUrl = canUseThreads
@@ -184,7 +239,7 @@ self.onmessage = async event => {
     try {
       await initialize(Boolean(message.forceSingleThread));
     } catch (error) {
-      self.postMessage({ type: "error", stage: "init", message: error.message });
+      self.postMessage({ type: "error", stage: error.stage || "init", message: error.message });
     }
     return;
   }
