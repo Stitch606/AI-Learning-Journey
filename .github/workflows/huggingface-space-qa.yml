@@ -65,7 +65,7 @@ jobs:
           assert result["annotated_frame"].startswith("data:image/jpeg;base64,"), result
           print("Gradio PIL -> NumPy frame API passed:", result)
           PY
-      - name: Test complete video upload, processing, and result download
+      - name: Test complete video upload, processing, and in-page byte-range playback
         run: |
           python - <<'PY'
           import time
@@ -119,10 +119,21 @@ jobs:
                   raise AssertionError("Video analysis did not complete within 240 seconds")
 
               assert status.get("output_ready") is True, status
-              result = requests.get(base + f"/api/analyze-video/{job_id}/result", timeout=60)
+              result_url = base + f"/api/analyze-video/{job_id}/result"
+              # The website's video element must be able to request byte ranges,
+              # and the server must retain the file across multiple player requests.
+              first_range = requests.get(result_url, headers={"Range": "bytes=0-1023"}, timeout=30)
+              assert first_range.status_code == 206, (first_range.status_code, first_range.headers, first_range.text[:500])
+              assert first_range.headers.get("content-range", "").startswith("bytes 0-1023/"), first_range.headers
+              assert len(first_range.content) == 1024, len(first_range.content)
+
+              result = requests.get(result_url, timeout=60)
               assert result.status_code == 200, (result.status_code, result.text[:1000])
               assert result.headers.get("content-type", "").startswith("video/mp4"), result.headers
               assert len(result.content) > 1000, f"Output video is too small: {len(result.content)} bytes"
+              second_range = requests.get(result_url, headers={"Range": "bytes=0-127"}, timeout=30)
+              assert second_range.status_code == 206, (second_range.status_code, second_range.headers)
+              assert len(second_range.content) == 128, len(second_range.content)
               output = Path(folder) / "annotated-result.mp4"
               output.write_bytes(result.content)
               capture = cv2.VideoCapture(str(output))
