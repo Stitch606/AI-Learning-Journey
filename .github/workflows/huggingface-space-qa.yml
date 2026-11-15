@@ -61,7 +61,8 @@ jobs:
           assert result["status"] == "ok", result
           assert result["frame_shape"] == [80, 120, 3], result
           assert result["frame_dtype"] == "uint8", result
-          assert result["model_connected"] is False, result
+          assert result["model_connected"] is True, result
+          assert result["annotated_frame"].startswith("data:image/jpeg;base64,"), result
           print("Gradio PIL -> NumPy frame API passed:", result)
           PY
       - name: Capture and test desktop/mobile UI
