@@ -210,18 +210,11 @@ async function analyzeUploadedVideo(file){
     log("Upload complete · background analysis started","green");
     const result=await waitForVideoJob(job.job_id,videoAnalysisAbort.signal);
     updateAnalysisProgress("complete",100,"Analysis complete · downloading the annotated video…");
-    const response=await fetch("/api/analyze-video/"+encodeURIComponent(job.job_id)+"/result",{signal:videoAnalysisAbort.signal});
-    if(!response.ok){
-      let message="Could not download the analyzed video ("+response.status+")";
-      try{const body=await response.json();message=body.detail||message;}catch{}
-      throw new Error(message);
-    }
-    const outputBlob=await response.blob();
-    if(!outputBlob.size)throw new Error("The analysis returned an empty video.");
-    URL.revokeObjectURL(previewUrl);
-    state.videoUrl=URL.createObjectURL(outputBlob);
+    // Stream the result directly in the native player; no JS Blob download.
+    state.videoUrl="/api/analyze-video/"+encodeURIComponent(job.job_id)+"/result";
     video.src=state.videoUrl;
     video.load();
+    URL.revokeObjectURL(previewUrl);
     await video.play().catch(()=>{});
     state.running=true;
     showMedia();
