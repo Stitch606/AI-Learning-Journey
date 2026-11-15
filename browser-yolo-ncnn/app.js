@@ -42,8 +42,7 @@ async function prepareThreadIsolation() {
   }
 }
 
-const threadIsolationReady = await prepareThreadIsolation();
-window.__ncnnIsolationReady = threadIsolationReady;
+let threadIsolationReady = false;
 
 let cameraStream = null;
 let cameraRunning = false;
@@ -58,7 +57,7 @@ let workerInitTimer = 0;
 let workerStage = "Starting NCNN";
 let usingSingleThreadFallback = false;
 
-cameraButton.disabled = true;
+cameraButton.disabled = false;
 imageInput.disabled = true;
 
 function launchWorker(forceSingleThread = false) {
@@ -82,7 +81,7 @@ function launchWorker(forceSingleThread = false) {
     if (message.type === "ready") {
       clearTimeout(workerInitTimer);
       workerReady = true;
-      cameraButton.disabled = false;
+      cameraButton.disabled = cameraRunning;
       imageInput.disabled = false;
       setStatus(message.runtimeMode === "simd-threads"
         ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
@@ -115,7 +114,6 @@ function launchWorker(forceSingleThread = false) {
       inferenceBusy = false;
       setStatus("Model loading failed");
       notice.textContent = "NCNN could not start: " + message.message;
-      cameraButton.disabled = true;
       imageInput.disabled = true;
       processPendingFrame();
     }
@@ -127,7 +125,6 @@ function launchWorker(forceSingleThread = false) {
       return;
     }
     clearTimeout(workerInitTimer);
-    cameraButton.disabled = true;
     imageInput.disabled = true;
     inferenceBusy = false;
     setStatus("Runtime error");
@@ -149,7 +146,6 @@ function armWorkerTimeout() {
     }
     setStatus("Model loading timed out");
     notice.textContent = workerStage + " is taking longer than 250 seconds. Check the connection, reload the page, and try again.";
-    cameraButton.disabled = true;
     imageInput.disabled = true;
     worker?.terminate();
   }, 250000);
@@ -159,7 +155,6 @@ function retrySingleThread(reason) {
   if (usingSingleThreadFallback) return;
   usingSingleThreadFallback = true;
   clearTimeout(workerInitTimer);
-  cameraButton.disabled = true;
   imageInput.disabled = true;
   setStatus("Retrying with single-thread NCNN");
   notice.textContent = reason + " Switching to the compatible single-thread runtime…";
@@ -243,10 +238,6 @@ function stopCamera() {
 }
 
 async function startCamera() {
-  if (!workerReady) {
-    notice.textContent = "Wait until the NCNN model status says model ready.";
-    return;
-  }
   if (!navigator.mediaDevices?.getUserMedia) {
     notice.textContent = "Camera access requires HTTPS and a browser with camera support.";
     return;
@@ -337,7 +328,20 @@ if (!supportsWasmSimd()) {
   notice.textContent = "Camera preview is available, but this browser does not support WebAssembly SIMD, so local pose inference cannot start.";
 } else {
   setStatus("Loading NCNN model");
-  notice.textContent = "Loading the local NCNN model. Camera controls unlock when the model is ready.";
-  usingSingleThreadFallback = !threadIsolationReady;
-  launchWorker(!threadIsolationReady);
+  notice.textContent = "Camera is available immediately. Pose inference starts when the local model is ready.";
+  Promise.race([
+    prepareThreadIsolation(),
+    new Promise(resolve => setTimeout(() => resolve(false), 8000))
+  ]).then(ready => {
+    threadIsolationReady = ready;
+    window.__ncnnIsolationReady = ready;
+    usingSingleThreadFallback = !ready;
+    launchWorker(!ready);
+  }).catch(error => {
+    console.warn("Thread isolation setup failed; using single-thread NCNN.", error);
+    threadIsolationReady = false;
+    window.__ncnnIsolationReady = false;
+    usingSingleThreadFallback = true;
+    launchWorker(true);
+  });
 }
