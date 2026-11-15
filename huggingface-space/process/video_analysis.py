@@ -29,6 +29,7 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
     codec_used = None
     processed_frames = 0
     frame_index = 0
+    people_summary = {}
 
     reset_streaming_state()
     try:
@@ -39,6 +40,15 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
             if frame_index % sample_interval == 0:
                 rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
                 result = process_stream_frame(rgb_frame)
+                for person in result.get("people", []):
+                    person_id = int(person["id"])
+                    people_summary[person_id] = {
+                        "id": person_id,
+                        "person": person.get("person", f"Person {person_id}"),
+                        "action": person.get("action", "Unknown"),
+                        "confidence": float(person.get("confidence", 0.0)),
+                        "time": f"{frame_index / source_fps:.1f}s",
+                    }
                 encoded = result.get("annotated_frame")
                 if encoded and encoded.startswith("data:image/"):
                     image_bytes = base64.b64decode(encoded.split(",", 1)[1])
@@ -85,4 +95,5 @@ def analyze_video_file(input_path: str, output_path: str) -> dict:
         "duration_seconds": round(duration_seconds, 2),
         "output_fps": round(output_fps, 3),
         "codec": codec_used or "unknown",
+        "people": list(people_summary.values()),
     }
