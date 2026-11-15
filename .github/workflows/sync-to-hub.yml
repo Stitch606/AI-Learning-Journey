@@ -1,19 +1,23 @@
 name: Sync to Hugging Face Space
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Hugging Face Space QA"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "huggingface-space/**"
-      - ".github/workflows/sync-to-hub.yml"
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   sync:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout the exact QA-tested revision
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Sync files to Hugging Face
         uses: huggingface/hub-sync@v0.3.0
@@ -23,5 +27,3 @@ jobs:
           hf_token: ${{ secrets.CHATGPT_SPACE_EDITOR }}
           subdirectory: huggingface-space
           space_sdk: gradio
-
-# Keep the Hugging Face Space synchronized with runtime model assets.
