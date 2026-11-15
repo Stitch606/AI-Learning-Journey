@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -10,6 +11,8 @@ import base64
 import json
 from struct import unpack_from
 from time import perf_counter
+from threading import Lock
+from uuid import uuid4
 
 import gradio as gr
 import numpy as np
@@ -23,7 +26,7 @@ from PIL import Image
 from gpu import gpu, gpu_ready
 from process.streaming_inference import process_stream_frame, reset_streaming_state
 from process.yolo_only import process_yolo_frame
-from process.video_analysis import analyze_video_file
+from process.video_analysis import analyze_video_file, get_video_progress
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,9 +54,35 @@ async def health():
     return {"status": "ok", "frontend": "ready", "model": "connected"}
 
 
-@app.post("/api/analyze-video")
+_VIDEO_JOBS = {}
+_VIDEO_JOBS_LOCK = Lock()
+_VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+
+
+def _run_video_job(job_id: str, input_path: str, output_path: str) -> None:
+    with _VIDEO_JOBS_LOCK:
+        _VIDEO_JOBS[job_id].update(status="processing", stage="processing")
+    try:
+        result = analyze_video_file(input_path, output_path, job_id)
+        with _VIDEO_JOBS_LOCK:
+            _VIDEO_JOBS[job_id].update(status="completed", stage="completed", progress=100.0, result=result)
+    except Exception as error:
+        with _VIDEO_JOBS_LOCK:
+            _VIDEO_JOBS[job_id].update(status="failed", stage="failed", error=str(error))
+        try:
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+    finally:
+        try:
+            os.remove(input_path)
+        except FileNotFoundError:
+            pass
+
+
+@app.post("/api/analyze-video", status_code=202)
 async def analyze_video_upload(file: UploadFile = File(...)):
-    """Upload a video, analyze it with YOLO + ST-GCN++, and return an annotated MP4."""
+    """Accept an upload quickly, then analyze it in a background worker."""
     filename = (file.filename or "video").lower()
     if not filename.endswith((".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")):
         raise HTTPException(status_code=415, detail="Upload an MP4, MOV, M4V, AVI, MKV, or WebM video.")
@@ -76,28 +105,16 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                     raise HTTPException(status_code=413, detail="Video is larger than the 512 MB demo limit.")
                 destination.write(part)
 
-        result = analyze_video_file(input_path, output_path)
-
-        def cleanup():
-            for path in (input_path, output_path):
-                try:
-                    os.remove(path)
-                except FileNotFoundError:
-                    pass
-
-        return FileResponse(
-            output_path,
-            media_type="video/mp4",
-            filename="human-action-analysis.mp4",
-            headers={
-                "X-Frames-Analyzed": str(result["frames_analyzed"]),
-                "X-Video-Duration": str(result["duration_seconds"]),
-                "X-Analysis-FPS": str(result["output_fps"]),
-                "X-Video-Codec": result["codec"],
-                "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
-            },
-            background=BackgroundTask(cleanup),
-        )
+        job_id = uuid4().hex
+        with _VIDEO_JOBS_LOCK:
+            _VIDEO_JOBS[job_id] = {
+                "status": "queued",
+                "stage": "queued",
+                "progress": 0.0,
+                "filename": Path(filename).name,
+            }
+        _VIDEO_EXECUTOR.submit(_run_video_job, job_id, input_path, output_path)
+        return {"job_id": job_id, "status": "queued"}
     except HTTPException:
         for path in (input_path, output_path):
             try:
@@ -111,9 +128,64 @@ async def analyze_video_upload(file: UploadFile = File(...)):
                 os.remove(path)
             except FileNotFoundError:
                 pass
-        raise HTTPException(status_code=500, detail=f"Video analysis failed: {error}") from error
+        raise HTTPException(status_code=500, detail=f"Could not accept video: {error}") from error
     finally:
         await file.close()
+
+
+@app.get("/api/analyze-video/{job_id}")
+async def get_video_analysis_status(job_id: str):
+    with _VIDEO_JOBS_LOCK:
+        job = dict(_VIDEO_JOBS.get(job_id, {}))
+    if not job:
+        raise HTTPException(status_code=404, detail="Video analysis job was not found.")
+    if job.get("status") == "processing":
+        job.update(get_video_progress(job_id))
+    result = job.pop("result", None)
+    if result:
+        job["result"] = {
+            "frames_analyzed": result["frames_analyzed"],
+            "duration_seconds": result["duration_seconds"],
+            "output_fps": result["output_fps"],
+            "codec": result["codec"],
+            "people": result["people"],
+        }
+    return job
+
+
+@app.get("/api/analyze-video/{job_id}/result")
+async def get_video_analysis_result(job_id: str):
+    with _VIDEO_JOBS_LOCK:
+        job = _VIDEO_JOBS.get(job_id)
+        if not job or job.get("status") != "completed":
+            raise HTTPException(status_code=409, detail="The analyzed video is not ready yet.")
+        output_path = job.get("output_path")
+        result = job.get("result")
+    if not output_path:
+        raise HTTPException(status_code=404, detail="The analyzed video file is unavailable.")
+
+    def cleanup():
+        for path in (output_path,):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+        with _VIDEO_JOBS_LOCK:
+            _VIDEO_JOBS.pop(job_id, None)
+
+    return FileResponse(
+        output_path,
+        media_type="video/mp4",
+        filename="human-action-analysis.mp4",
+        headers={
+            "X-Frames-Analyzed": str(result["frames_analyzed"]),
+            "X-Video-Duration": str(result["duration_seconds"]),
+            "X-Analysis-FPS": str(result["output_fps"]),
+            "X-Video-Codec": result["codec"],
+            "X-Action-Summary": base64.b64encode(json.dumps(result["people"]).encode("utf-8")).decode("ascii"),
+        },
+        background=BackgroundTask(cleanup),
+    )
 
 
 def process_frame(frame: Image.Image) -> dict:
