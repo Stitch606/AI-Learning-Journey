@@ -128,7 +128,11 @@ class StreamingInference:
             if track_id is not None:
                 prediction = self.predictions.get(int(track_id))
                 action = prediction["action"] if prediction else "Collecting frames"
-                label = f"ID {int(track_id)} | {action}"
+                if prediction:
+                    confidence = float(prediction.get("confidence", 0.0))
+                    label = f"ID {int(track_id)} | {action} | {confidence:.0%}"
+                else:
+                    label = f"ID {int(track_id)} | {action}"
             else:
                 label = action
 
