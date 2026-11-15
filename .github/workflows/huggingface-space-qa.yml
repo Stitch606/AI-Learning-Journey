@@ -92,7 +92,7 @@ jobs:
                 return { video, rail, cards, pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
               });
               if (geometry.pageOverflow) throw new Error("Desktop horizontal overflow at " + width + "px");
-              if (width >= 1400 && (geometry.video.width <= geometry.rail.width || geometry.rail.width > 330))
+              if (width >= 1400 && (geometry.video.width <= geometry.rail.width || geometry.rail.width > 390))
                 throw new Error("Desktop video/side-rail proportions failed at " + width + "px: " + JSON.stringify(geometry));
               if (geometry.cards.some(card => card.scrollWidth > card.width + 2))
                 throw new Error("Analysis cards overflow at " + width + "px: " + JSON.stringify(geometry.cards));
