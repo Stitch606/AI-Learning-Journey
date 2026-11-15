@@ -131,6 +131,7 @@ jobs:
               capture.release()
               assert output_frames > 0, "Downloaded result contains no frames"
               assert status["result"]["frames_analyzed"] == output_frames, status
+              assert status["result"]["codec"] == "h264", status
               print("Full video pipeline passed:", {
                   "input_bytes": source.stat().st_size,
                   "output_bytes": len(result.content),
