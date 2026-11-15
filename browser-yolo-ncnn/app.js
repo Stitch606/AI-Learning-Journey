@@ -66,7 +66,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=2", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
