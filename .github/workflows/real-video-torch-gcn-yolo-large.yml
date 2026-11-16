@@ -1,0 +1,69 @@
+name: KTH Hand Waving with YOLO Large and native PyTorch ST-GCN++
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/real_video_torch_gcn_yolo_large.py"
+      - ".github/workflows/real-video-torch-gcn-yolo-large.yml"
+      - "GCN/STGCNPP/model_multi_person.py"
+      - "GCN/STGCNPP/ntu60_labels.txt"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download the 84.81% fine-tuned GCN checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-finetuned-resumed
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 42467266854
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: training-artifact
+
+      - name: Install the original PyTorch inference stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.26.4 opencv-python-headless ultralytics
+
+      - name: Place and verify the exact fine-tuned checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(find training-artifact -type f -name 'stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth' -print -quit)"
+          test -n "$checkpoint"
+          mkdir -p GCN/checkpoints
+          cp "$checkpoint" GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth)" -gt 1000000
+          ls -lh GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+
+      - name: Run YOLO Large on every original frame and native PyTorch GCN
+        run: python tests/real_video_torch_gcn_yolo_large.py
+
+      - name: Upload complete test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kth-yolo-large-pytorch-gcn-report
+          path: |
+            artifacts/kth-yolo-large-pytorch-gcn/report.json
+            artifacts/kth-yolo-large-pytorch-gcn/person_keypoints.npz
+            artifacts/kth-yolo-large-pytorch-gcn/source_handwaving.avi
+          if-no-files-found: warn
+          retention-days: 14
