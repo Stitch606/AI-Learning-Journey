@@ -75,12 +75,16 @@ class StreamingInference:
         self.mlti = mlti
         self.manager = StreamManager()
         self.predictions = {}
+        self.flow_tracks = {}
+        self.previous_gray = None
         self.last_frame_at = None
         self.last_fps = 0.0
 
     def reset(self):
         self.manager.reset()
         self.predictions.clear()
+        self.flow_tracks.clear()
+        self.previous_gray = None
         self.last_frame_at = None
 
     def _render_frame(self, bgr_frame, result, detected_ids):
@@ -187,6 +191,203 @@ class StreamingInference:
 
         return canvas
 
+    def _update_gcn(self, ready, width, height):
+        if not ready:
+            return
+
+        person_ids = [person["track_id"] for person in ready]
+        ready_keypoints = np.stack(
+            [person["keypoints"] for person in ready],
+            axis=0,
+        )
+        prediction = self.mlti.predict(
+            ready_keypoints,
+            topk=5,
+            person_ids=person_ids,
+            image_size=(width, height),
+        )
+        for person in prediction["persons"]:
+            self.predictions[int(person["person_id"])] = {
+                "action": person["action"],
+                "confidence": person["confidence"],
+            }
+
+    def _people_payload(self, detected_ids):
+        active_tracks = set(self.manager.get_active_tracks())
+        self.predictions = {
+            track_id: prediction
+            for track_id, prediction in self.predictions.items()
+            if track_id in active_tracks
+        }
+        people = []
+        for track_id in detected_ids:
+            prediction = self.predictions.get(int(track_id))
+            people.append({
+                "id": int(track_id),
+                "person": f"Person {int(track_id)}",
+                "action": prediction["action"] if prediction else "Collecting frames",
+                "confidence": prediction["confidence"] if prediction else 0.0,
+            })
+        return people
+
+    def _render_flow_frame(self, bgr_frame):
+        canvas = bgr_frame.copy()
+        height, width = canvas.shape[:2]
+        line_width = max(2, round(min(width, height) / 360))
+        radius = max(3, line_width + 1)
+        for track_id, track in self.flow_tracks.items():
+            x1, y1, x2, y2 = np.rint(track["box"]).astype(int)
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(width - 1, x2), min(height - 1, y2)
+            color = (80, 220, 120)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, line_width)
+            prediction = self.predictions.get(track_id)
+            action = prediction["action"] if prediction else "Collecting frames"
+            label = f"ID {track_id} | {action}"
+            if prediction:
+                label += f" | {float(prediction.get('confidence', 0.0)):.0%}"
+            font_scale = max(0.45, min(width, height) / 1000)
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, line_width
+            )
+            label_top = max(0, y1 - text_height - baseline - 8)
+            cv2.rectangle(
+                canvas, (x1, label_top),
+                (min(width - 1, x1 + text_width + 8), y1), color, -1
+            )
+            cv2.putText(
+                canvas, label, (x1 + 4, max(text_height, y1 - baseline - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (20, 24, 30),
+                line_width, cv2.LINE_AA
+            )
+            points = track["keypoints"]
+            visible = {}
+            for index, point in enumerate(points):
+                px, py = int(round(float(point[0]))), int(round(float(point[1])))
+                if float(point[2]) >= KEYPOINT_CONFIDENCE and 0 <= px < width and 0 <= py < height:
+                    visible[index] = (px, py)
+            for start, end in SKELETON:
+                if start in visible and end in visible:
+                    cv2.line(canvas, visible[start], visible[end], color, line_width, cv2.LINE_AA)
+            for point in visible.values():
+                cv2.circle(canvas, point, radius, color, -1, cv2.LINE_AA)
+        return canvas
+
+    def process_flow_frame(self, rgb_frame):
+        """Propagate accepted person keypoints through one frame using LK optical flow."""
+        started = perf_counter()
+        now = monotonic()
+        if (
+            self.last_frame_at is not None
+            and now - self.last_frame_at > self.manager.disappear_timeout
+        ):
+            self.reset()
+        self.last_frame_at = now
+
+        frame = np.asarray(rgb_frame, dtype=np.uint8)
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError("Expected an RGB frame with shape [height, width, 3]")
+        height, width = frame.shape[:2]
+        bgr_frame = np.ascontiguousarray(frame[:, :, ::-1])
+        gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
+
+        if self.previous_gray is None or not self.flow_tracks:
+            self.previous_gray = gray
+            rendered = self._render_flow_frame(bgr_frame)
+            annotated_frame = self._encode_annotated_frame(rendered)
+            return {
+                "people": self._people_payload(list(self.flow_tracks)),
+                "fps": 0.0,
+                "model_connected": True,
+                "modelStatus": "YOLO Pose + Optical Flow + ST-GCN++ connected",
+                "message": "Waiting for the next YOLO Pose detection frame.",
+                "frame_shape": list(frame.shape),
+                "frame_dtype": str(frame.dtype),
+                "annotated_frame": annotated_frame,
+            }
+
+        next_tracks = {}
+        manager_keypoints = []
+        manager_ids = []
+        for track_id, track in self.flow_tracks.items():
+            old_points = track["keypoints"][:, :2].astype(np.float32).reshape(-1, 1, 2)
+            if len(old_points) == 0:
+                continue
+            forward, forward_status, _ = cv2.calcOpticalFlowPyrLK(
+                self.previous_gray, gray, old_points, None,
+                winSize=(21, 21), maxLevel=3,
+                criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+            )
+            if forward is None or forward_status is None:
+                continue
+            backward, backward_status, _ = cv2.calcOpticalFlowPyrLK(
+                gray, self.previous_gray, forward, None,
+                winSize=(21, 21), maxLevel=3,
+                criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+            )
+            if backward is None or backward_status is None:
+                continue
+
+            old_xy = old_points.reshape(-1, 2)
+            new_xy = forward.reshape(-1, 2)
+            back_xy = backward.reshape(-1, 2)
+            fb_error = np.linalg.norm(old_xy - back_xy, axis=1)
+            valid = (
+                (forward_status.reshape(-1) == 1)
+                & (backward_status.reshape(-1) == 1)
+                & np.isfinite(new_xy).all(axis=1)
+                & (fb_error <= 3.0)
+                & (new_xy[:, 0] >= 0) & (new_xy[:, 0] < width)
+                & (new_xy[:, 1] >= 0) & (new_xy[:, 1] < height)
+            )
+            failed_ratio = 1.0 - float(np.count_nonzero(valid)) / len(valid)
+            if failed_ratio > 0.50:
+                continue
+
+            propagated = track["keypoints"].copy()
+            propagated[valid, :2] = new_xy[valid]
+            propagated[valid, 2] = np.maximum(
+                propagated[valid, 2], KEYPOINT_CONFIDENCE
+            )
+            propagated[~valid, 2] = 0.0
+
+            valid_displacements = new_xy[valid] - old_xy[valid]
+            if len(valid_displacements):
+                dx, dy = np.median(valid_displacements, axis=0)
+            else:
+                dx, dy = 0.0, 0.0
+            box = np.asarray(track["box"], dtype=np.float32) + np.array([dx, dy, dx, dy], dtype=np.float32)
+            next_tracks[track_id] = {
+                "keypoints": propagated,
+                "box": box,
+            }
+            manager_keypoints.append(propagated)
+            manager_ids.append(track_id)
+
+        self.flow_tracks = next_tracks
+        self.previous_gray = gray
+        ready = self.manager.update(
+            keypoints=np.asarray(manager_keypoints, dtype=np.float32)
+            if manager_keypoints else np.empty((0, 17, 3), dtype=np.float32),
+            track_ids=np.asarray(manager_ids, dtype=np.int64),
+        )
+        self._update_gcn(ready, width, height)
+        people = self._people_payload(manager_ids)
+        rendered = self._render_flow_frame(bgr_frame)
+        annotated_frame = self._encode_annotated_frame(rendered)
+        elapsed = perf_counter() - started
+        self.last_fps = 1.0 / elapsed if elapsed > 0 else 0.0
+        return {
+            "people": people,
+            "fps": self.last_fps,
+            "model_connected": True,
+            "modelStatus": "YOLO Pose + Optical Flow + ST-GCN++ connected",
+            "message": "Optical Flow propagated keypoints between YOLO detections.",
+            "frame_shape": list(frame.shape),
+            "frame_dtype": str(frame.dtype),
+            "annotated_frame": annotated_frame,
+        }
+
     @staticmethod
     def _encode_annotated_frame(bgr_frame):
         success, encoded = cv2.imencode(
@@ -226,68 +427,58 @@ class StreamingInference:
         detected = []
         ready = []
         result = results[0] if results else None
+        self.flow_tracks = {}
 
         if result is not None and result.keypoints is not None:
-            keypoints_tensor = result.keypoints.data
+            keypoints = result.keypoints.data.cpu().numpy()
+            boxes = (
+                result.boxes.xyxy.cpu().numpy()
+                if result.boxes is not None and result.boxes.xyxy is not None
+                else np.empty((0, 4), dtype=np.float32)
+            )
+            track_ids = (
+                result.boxes.id.cpu().numpy().astype(np.int64)
+                if result.boxes is not None and result.boxes.id is not None
+                else np.empty((0,), dtype=np.int64)
+            )
 
-            if result.boxes is not None and result.boxes.id is not None:
-                keypoints = keypoints_tensor.cpu().numpy()
-                track_ids = result.boxes.id.cpu().numpy().astype(np.int64)
-
-                ready = self.manager.update(
-                    keypoints=keypoints,
-                    track_ids=track_ids,
+            accepted_keypoints = []
+            accepted_ids = []
+            for index, track_id in enumerate(track_ids):
+                if index >= len(keypoints) or index >= len(boxes):
+                    continue
+                person_points = keypoints[index].astype(np.float32, copy=True)
+                in_bounds = (
+                    (person_points[:, 0] >= 0) & (person_points[:, 0] < width)
+                    & (person_points[:, 1] >= 0) & (person_points[:, 1] < height)
                 )
+                valid = (person_points[:, 2] >= KEYPOINT_CONFIDENCE) & in_bounds
+                failed_ratio = 1.0 - float(np.count_nonzero(valid)) / len(valid)
+                if failed_ratio > 0.50:
+                    continue
+                person_points[~valid, 2] = 0.0
+                accepted_keypoints.append(person_points)
+                accepted_ids.append(int(track_id))
+                self.flow_tracks[int(track_id)] = {
+                    "keypoints": person_points.copy(),
+                    "box": boxes[index].astype(np.float32, copy=True),
+                }
+                detected.append(int(track_id))
 
-                for track_id in track_ids:
-                    detected.append(int(track_id))
-            else:
-                self.manager.update(
-                    keypoints=np.empty((0, 17, 3), dtype=np.float32),
-                    track_ids=np.empty((0,), dtype=np.int64),
-                )
+            ready = self.manager.update(
+                keypoints=np.asarray(accepted_keypoints, dtype=np.float32)
+                if accepted_keypoints else np.empty((0, 17, 3), dtype=np.float32),
+                track_ids=np.asarray(accepted_ids, dtype=np.int64),
+            )
         else:
             self.manager.update(
                 keypoints=np.empty((0, 17, 3), dtype=np.float32),
                 track_ids=np.empty((0,), dtype=np.int64),
             )
 
-        if ready:
-            person_ids = [person["track_id"] for person in ready]
-            ready_keypoints = np.stack(
-                [person["keypoints"] for person in ready],
-                axis=0,
-            )
-
-            prediction = self.mlti.predict(
-                ready_keypoints,
-                topk=5,
-                person_ids=person_ids,
-                image_size=(width, height),
-            )
-
-            for person in prediction["persons"]:
-                self.predictions[int(person["person_id"])] = {
-                    "action": person["action"],
-                    "confidence": person["confidence"],
-                }
-
-        active_tracks = set(self.manager.get_active_tracks())
-        self.predictions = {
-            track_id: prediction
-            for track_id, prediction in self.predictions.items()
-            if track_id in active_tracks
-        }
-
-        people = []
-        for track_id in detected:
-            prediction = self.predictions.get(track_id)
-            people.append({
-                "id": track_id,
-                "person": f"Person {track_id}",
-                "action": prediction["action"] if prediction else "Collecting frames",
-                "confidence": prediction["confidence"] if prediction else 0.0,
-            })
+        self.previous_gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
+        self._update_gcn(ready, width, height)
+        people = self._people_payload(detected)
 
         rendered_frame = self._render_frame(bgr_frame, result, detected)
         annotated_frame = self._encode_annotated_frame(rendered_frame)
@@ -312,13 +503,23 @@ _streaming_lock = Lock()
 
 
 def process_stream_frame(rgb_frame):
-    """Process one RGB frame while preserving tracker and person buffers."""
+    """Run YOLO Pose and update persistent tracking and sequence state."""
     global _streaming_inference
 
     with _streaming_lock:
         if _streaming_inference is None:
             _streaming_inference = StreamingInference()
         return _streaming_inference.process_frame(rgb_frame)
+
+
+def process_flow_stream_frame(rgb_frame):
+    """Propagate tracked keypoints on an intermediate frame without running YOLO."""
+    global _streaming_inference
+
+    with _streaming_lock:
+        if _streaming_inference is None:
+            _streaming_inference = StreamingInference()
+        return _streaming_inference.process_flow_frame(rgb_frame)
 
 
 def reset_streaming_state():
