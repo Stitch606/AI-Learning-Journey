@@ -1,0 +1,76 @@
+name: KTH PYSKL full-sequence Joint Motion windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "GCN/STGCNPP/model_multi_person.py"
+      - "tests/kth_pyskl_full_sequence_jm_windows.py"
+      - ".github/workflows/kth-pyskl-full-sequence-jm.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download the saved YOLO keypoints
+        uses: actions/download-artifact@v4
+        with:
+          name: kth-yolo-large-pytorch-gcn-report
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 43927154130
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: yolo-artifact
+
+      - name: Download the fine-tuned checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-finetuned-resumed
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 42467266854
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: training-artifact
+
+      - name: Install PyTorch and NumPy
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install numpy==1.26.4
+          pip install --force-reinstall torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Place and verify input artifacts
+        run: |
+          set -euo pipefail
+          keypoints="$(find yolo-artifact -type f -name 'person_keypoints.npz' -print -quit)"
+          checkpoint="$(find training-artifact -type f -name 'stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth' -print -quit)"
+          test -n "$keypoints"
+          test -n "$checkpoint"
+          mkdir -p GCN/checkpoints
+          cp "$keypoints" yolo-artifact/person_keypoints.npz
+          cp "$checkpoint" GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+          ls -lh yolo-artifact/person_keypoints.npz GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+
+      - name: Verify channel-by-channel parity and run six corrected windows
+        run: python tests/kth_pyskl_full_sequence_jm_windows.py
+
+      - name: Upload report and profiler traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kth-pyskl-full-sequence-jm-report
+          path: artifacts/kth_pyskl_full_sequence_jm/
+          if-no-files-found: error
+          retention-days: 14
