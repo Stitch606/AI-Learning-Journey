@@ -87,7 +87,7 @@ def evaluate_yolo(frames):
 
     for frame_index, frame in enumerate(frames):
         result_list = model.track(
-            frame, persist=True, verbose=False, conf=YOLO_CONF, device="cpu"
+            frame, persist=True, verbose=False, device="cpu"
         )
         result = result_list[0] if result_list else None
         count = 0
