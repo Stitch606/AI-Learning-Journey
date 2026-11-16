@@ -16,11 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      RUN_NAME: "${c.run}"
-      MODE: "${c.mode}"
-      REAL_PER_30: "${c.real}"
-      USE_TRACKER: "${c.tracker}"
-      USE_FLOW: "${c.flow}"
+      RUN_NAME: "ncnn-yolo512-flow20-10"
+      MODE: "NCNN YOLO 20 + Optical Flow 10 / 30 at 512x512"
+      REAL_PER_30: "20"
+      USE_TRACKER: "1"
+      USE_FLOW: "1"
       RESIZE_INPUT: "1"
       RESIZE_SIZE: "512"
       OMP_NUM_THREADS: "2"
