@@ -119,9 +119,12 @@ class StreamingInference:
             (240, 110, 90),
         )
 
+        accepted_ids = set(int(track_id) for track_id in detected_ids)
         for index, box in enumerate(boxes):
             track_id = ids[index] if index < len(ids) else None
-            color = palette[(int(track_id) if track_id is not None else index) % len(palette)]
+            if track_id is None or int(track_id) not in accepted_ids:
+                continue
+            color = palette[int(track_id) % len(palette)]
             x1, y1, x2, y2 = np.rint(box).astype(int)
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(width - 1, x2), min(height - 1, y2)
@@ -335,6 +338,7 @@ class StreamingInference:
             valid = (
                 (forward_status.reshape(-1) == 1)
                 & (backward_status.reshape(-1) == 1)
+                & (track["keypoints"][:, 2] >= KEYPOINT_CONFIDENCE)
                 & np.isfinite(new_xy).all(axis=1)
                 & (fb_error <= 3.0)
                 & (new_xy[:, 0] >= 0) & (new_xy[:, 0] < width)
