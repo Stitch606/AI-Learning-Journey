@@ -1,0 +1,70 @@
+name: NCNN YOLO every frame at 512x512, direct GCN
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tests/ncnn_pipeline/real_video_ncnn_experiments.py"
+      - ".github/workflows/ncnn-yolo512-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUN_NAME: "${c.run}"
+      MODE: "${c.mode}"
+      REAL_PER_30: "${c.real}"
+      USE_TRACKER: "${c.tracker}"
+      USE_FLOW: "${c.flow}"
+      RESIZE_INPUT: "1"
+      RESIZE_SIZE: "512"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      PYTHONUNBUFFERED: "1"
+      YOLO_VERBOSE: "false"
+    steps:
+      - name: Checkout main with current Hugging Face checkpoint
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install NCNN, PNNX and inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir numpy opencv-python-headless ultralytics torch pnnx ncnn
+
+      - name: Verify current Hugging Face checkpoint
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("huggingface-space/process/weights/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth")
+          if not p.is_file() or p.stat().st_size < 1024:
+              raise SystemExit(f"Missing or incomplete checkpoint: {p}")
+          print(f"Checkpoint: {p} ({p.stat().st_size:,} bytes)")
+          PY
+
+      - name: Run 512px experiment
+        run: python tests/ncnn_pipeline/real_video_ncnn_experiments.py
+
+      - name: Upload report and converted models
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RUN_NAME }}-report
+          path: |
+            artifacts/${{ env.RUN_NAME }}/report.json
+            artifacts/${{ env.RUN_NAME }}/models/
+            artifacts/source_handwaving.avi
+          if-no-files-found: warn
+          retention-days: 14
