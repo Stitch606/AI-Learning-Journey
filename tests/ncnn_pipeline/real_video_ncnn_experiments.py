@@ -65,13 +65,13 @@ def read_video():
     return frames, fps, width, height
 
 
-def export_models():
+def export_models(inference_size):
     model_dir = OUT / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
     yolo_dir = model_dir / "yolo26n-pose_ncnn_model"
     yolo_start = time.perf_counter()
     if not yolo_dir.exists():
-        YOLO(YOLO_MODEL).export(format="ncnn", half=True, imgsz=640, device="cpu")
+        YOLO(YOLO_MODEL).export(format="ncnn", half=True, imgsz=inference_size, device="cpu")
         exported = ROOT / "yolo26n-pose_ncnn_model"
         if not exported.exists():
             candidates = list(ROOT.glob("*ncnn*"))
@@ -88,10 +88,10 @@ def export_models():
         )
 
     yolo = YOLO(str(yolo_dir), task="pose")
-    probe = np.zeros((640, 640, 3), dtype=np.uint8)
+    probe = np.zeros((inference_size, inference_size, 3), dtype=np.uint8)
     probe_start = time.perf_counter()
     probe_results = yolo.predict(
-        probe, imgsz=640, verbose=False, conf=CONF, device="cpu"
+        probe, imgsz=inference_size, verbose=False, conf=CONF, device="cpu"
     )
     if len(probe_results) != 1:
         raise RuntimeError("YOLO NCNN predict preflight did not return one result")
@@ -214,15 +214,15 @@ def gcn_ncnn_predict(net, prepared):
             "probabilities": probabilities.tolist()}
 
 
-def resize_frame(frame, enabled):
+def resize_frame(frame, enabled, size):
     if not enabled:
         return frame
     h, w = frame.shape[:2]
-    scale = min(256 / w, 256 / h)
+    scale = min(size / w, size / h)
     nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
     resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-    canvas = np.zeros((256, 256, 3), dtype=np.uint8)
-    x0, y0 = (256 - nw) // 2, (256 - nh) // 2
+    canvas = np.zeros((size, size, 3), dtype=np.uint8)
+    x0, y0 = (size - nw) // 2, (size - nh) // 2
     canvas[y0:y0+nh, x0:x0+nw] = resized
     return canvas
 
@@ -259,13 +259,15 @@ def run():
     OUT.mkdir(parents=True, exist_ok=True)
     mode = os.environ["MODE"]
     real_count = int(os.environ["REAL_PER_30"])
-    resize = os.environ.get("RESIZE_256", "0") == "1"
+    resize = os.environ.get("RESIZE_INPUT", os.environ.get("RESIZE_256", "0")) == "1"
+    resize_size = int(os.environ.get("RESIZE_SIZE", "256"))
+    inference_size = resize_size if resize else 640
     use_tracker = os.environ.get("USE_TRACKER", "1") == "1"
     use_flow = os.environ.get("USE_FLOW", "1") == "1"
 
     download_video()
     frames, source_fps, original_w, original_h = read_video()
-    prepared_models = export_models()
+    prepared_models = export_models(inference_size)
     yolo = prepared_models["yolo"]
     gcn = prepared_models["gcn"]
     net = prepared_models["ncnn"]
@@ -293,7 +295,7 @@ def run():
 
         for offset, original in enumerate(block):
             index = block_start + offset
-            frame = resize_frame(original, resize)
+            frame = resize_frame(original, resize, resize_size)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             if offset in anchors:
                 start = time.perf_counter()
@@ -371,11 +373,11 @@ def run():
             if len(seq) >= GCN_WINDOW:
                 sequence = np.stack(list(seq)[-GCN_WINDOW:])
                 if resize:
-                    scale = min(256 / original_w, 256 / original_h)
+                    scale = min(resize_size / original_w, resize_size / original_h)
                     resized_w = max(1, round(original_w * scale))
                     resized_h = max(1, round(original_h * scale))
-                    pad_x = (256 - resized_w) // 2
-                    pad_y = (256 - resized_h) // 2
+                    pad_x = (resize_size - resized_w) // 2
+                    pad_y = (resize_size - resized_h) // 2
                     sequence[:, :, 0] = (sequence[:, :, 0] - pad_x) / scale
                     sequence[:, :, 1] = (sequence[:, :, 1] - pad_y) / scale
                 try:
@@ -405,7 +407,10 @@ def run():
         "frames_discarded_tail": len(frames) - processed,
         "source_fps": source_fps,
         "source_resolution": [original_w, original_h],
-        "input_resize": "letterbox_256x256" if resize else "native",
+        "input_resize": f"letterbox_{resize_size}x{resize_size}" if resize else "native",
+        "yolo_inference_size": inference_size,
+        "checkpoint_path": str(CHECKPOINT),
+        "checkpoint_bytes": CHECKPOINT.stat().st_size,
         "real_yolo_frames_per_30": real_count,
         "optical_flow_frames_per_30": CHUNK - real_count,
         "real_frame_positions_zero_based": sorted(positions),
