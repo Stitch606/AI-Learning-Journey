@@ -31,7 +31,7 @@ jobs:
           name: kth-yolo-large-diagnostics.zip
           repository: Stitch606/AI-Learning-Journey
           run-id: 43927154130
-          github-token: \${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: yolo-artifact
 
       - name: Download the exact 84.81% fine-tuned GCN checkpoint
