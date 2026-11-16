@@ -12,7 +12,11 @@ import imageio_ffmpeg
 import numpy as np
 
 from gpu import gpu
-from process.streaming_inference import process_stream_frame, reset_streaming_state
+from process.streaming_inference import (
+    process_flow_stream_frame,
+    process_stream_frame,
+    reset_streaming_state,
+)
 
 
 def get_video_progress(progress_path: str) -> dict:
@@ -135,12 +139,13 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
     source_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration_seconds = source_frames / source_fps if source_frames else 0.0
 
-    sample_interval = max(1, round(source_fps / 6.0))
-    output_fps = source_fps / sample_interval
+    sample_interval = max(1, round(source_fps / 10.0))
+    output_fps = source_fps
     processed_frames = 0
+    yolo_frames = 0
     frame_index = 0
     people_summary = {}
-    expected_samples = (source_frames + sample_interval - 1) // sample_interval if source_frames else 0
+    expected_samples = source_frames
 
     output_fd, worker_output_path = tempfile.mkstemp(suffix=".mp4")
     os.close(output_fd)
@@ -157,52 +162,58 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
             if not ok:
                 break
 
+            rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
             if frame_index % sample_interval == 0:
-                rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
                 result = process_stream_frame(rgb_frame)
+                yolo_frames += 1
+            else:
+                result = process_flow_stream_frame(rgb_frame)
 
-                for person in result.get("people", []):
-                    person_id = int(person["id"])
-                    people_summary[person_id] = {
-                        "id": person_id,
-                        "person": person.get("person", f"Person {person_id}"),
-                        "action": person.get("action", "Unknown"),
-                        "confidence": float(person.get("confidence", 0.0)),
-                        "time": f"{frame_index / source_fps:.1f}s",
-                    }
+            for person in result.get("people", []):
+                person_id = int(person["id"])
+                people_summary[person_id] = {
+                    "id": person_id,
+                    "person": person.get("person", f"Person {person_id}"),
+                    "action": person.get("action", "Unknown"),
+                    "confidence": float(person.get("confidence", 0.0)),
+                    "time": f"{frame_index / source_fps:.1f}s",
+                }
 
-                encoded = result.get("annotated_frame")
-                if encoded and encoded.startswith("data:image/"):
-                    image_bytes = base64.b64decode(encoded.split(",", 1)[1])
-                    annotated = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-                    if annotated is None:
-                        raise RuntimeError("Could not decode the annotated frame.")
-                else:
-                    annotated = bgr_frame
+            encoded = result.get("annotated_frame")
+            if encoded and encoded.startswith("data:image/"):
+                image_bytes = base64.b64decode(encoded.split(",", 1)[1])
+                annotated = cv2.imdecode(
+                    np.frombuffer(image_bytes, dtype=np.uint8),
+                    cv2.IMREAD_COLOR,
+                )
+                if annotated is None:
+                    raise RuntimeError("Could not decode the annotated frame.")
+            else:
+                annotated = bgr_frame
 
-                if encoder is None:
-                    height, width = annotated.shape[:2]
-                    encoder, error_log = _start_h264_encoder(
-                        worker_output_path,
-                        width,
-                        height,
-                        output_fps,
-                    )
+            if encoder is None:
+                height, width = annotated.shape[:2]
+                encoder, error_log = _start_h264_encoder(
+                    worker_output_path,
+                    width,
+                    height,
+                    output_fps,
+                )
 
-                try:
-                    encoder.stdin.write(np.ascontiguousarray(annotated).tobytes())
-                except (BrokenPipeError, OSError) as error:
-                    raise RuntimeError("The H.264 encoder stopped while receiving video frames.") from error
+            try:
+                encoder.stdin.write(np.ascontiguousarray(annotated).tobytes())
+            except (BrokenPipeError, OSError) as error:
+                raise RuntimeError("The H.264 encoder stopped while receiving video frames.") from error
 
-                processed_frames += 1
-                if expected_samples:
-                    _set_video_progress(
-                        progress_path,
-                        stage="processing",
-                        progress=min(99.0, processed_frames * 100.0 / expected_samples),
-                        processed_frames=processed_frames,
-                        total_frames=expected_samples,
-                    )
+            processed_frames += 1
+            if expected_samples:
+                _set_video_progress(
+                    progress_path,
+                    stage="processing",
+                    progress=min(99.0, processed_frames * 100.0 / expected_samples),
+                    processed_frames=processed_frames,
+                    total_frames=expected_samples,
+                )
 
             frame_index += 1
     finally:
@@ -237,6 +248,7 @@ def analyze_video_file(input_path: str, progress_path: str) -> dict:
         return {
             "video_bytes": video_bytes,
             "frames_analyzed": processed_frames,
+            "yolo_frames": yolo_frames,
             "duration_seconds": round(duration_seconds, 2),
             "output_fps": round(output_fps, 3),
             "codec": codec_used,
