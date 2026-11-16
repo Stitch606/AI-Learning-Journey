@@ -40,7 +40,7 @@ jobs:
           name: stgcnpp-ntu60-xsub-finetuned-resumed
           repository: Stitch606/AI-Learning-Journey
           run-id: 42467266854
-          github-token: \${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: training-artifact
 
       - name: Install native PyTorch inference stack
