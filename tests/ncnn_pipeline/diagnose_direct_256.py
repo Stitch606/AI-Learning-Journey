@@ -75,6 +75,7 @@ def main():
         "effective_gcn_window": 100,
         "resize": "letterbox_256x256",
         "ncnn_weight_storage": "FP32 (PNNX fp16=0)",
+        "ncnn_output": "raw logits followed by stable NumPy softmax",
         "valid_pose_frames": int((seq[:, :, 2].sum(axis=1) > 0).sum()),
         "prepared_min": float(prepared.min()),
         "prepared_max": float(prepared.max()),
