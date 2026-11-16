@@ -213,7 +213,7 @@ def main():
                             "cpu_time_total_us": float(item.cpu_time_total),
                             "calls": int(item.count),
                         }
-                        for item in prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=12) and prof.key_averages()[:12]
+                        for item in prof.key_averages()[:12]
                     ],
                 }
                 all_predictions.append(prediction)
