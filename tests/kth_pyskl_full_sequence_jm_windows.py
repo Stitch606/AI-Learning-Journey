@@ -200,6 +200,10 @@ def main():
                 prof.export_chrome_trace(str(trace_path))
 
                 person = prediction_result["persons"][0]
+                hand_waving_index = next(
+                    index for index, name in enumerate(model.class_names)
+                    if name.strip().lower() == "hand waving"
+                )
                 item = {
                     "window_index": window_index,
                     "frame_range_inclusive": [start, end - 1],
@@ -210,8 +214,8 @@ def main():
                     "top1_confidence": float(person["confidence"]),
                     "matches_ground_truth": person["action"].strip().lower() == "hand waving",
                     "hand_waving_probability": float(
-                        person["probabilities"][0]
-                    ) if False else None,
+                        person["probabilities"][hand_waving_index]
+                    ),
                     "top5": [
                         {
                             "action": row["action"],
