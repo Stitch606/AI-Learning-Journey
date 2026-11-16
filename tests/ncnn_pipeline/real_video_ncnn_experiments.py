@@ -151,7 +151,7 @@ def export_models(inference_size):
     parity_sample[..., 2] = parity_rng.uniform(0.05, 1.0, size=(100, 17)).astype(np.float32)
     with torch.inference_mode():
         expected_logits = ExportOne(gcn).eval()(torch.from_numpy(parity_sample))
-        expected = torch.softmax(expected_logits, dim=-1).cpu().numpy()
+        expected = expected_logits.cpu().numpy()
 
     parity_start = time.perf_counter()
     extractor = net.create_extractor()
