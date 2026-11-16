@@ -171,6 +171,35 @@ async function waitForVideoJob(jobId,signal){
     await new Promise(resolve=>setTimeout(resolve,1200));
   }
 }
+function waitForVideoFrame(video, timeoutMs=20000){
+  return new Promise((resolve,reject)=>{
+    let settled=false;
+    const cleanup=()=>{
+      clearTimeout(timer);
+      video.removeEventListener("loadeddata",check);
+      video.removeEventListener("canplay",check);
+      video.removeEventListener("error",onError);
+    };
+    const finish=(error)=>{
+      if(settled)return;
+      settled=true;
+      cleanup();
+      error?reject(error):resolve();
+    };
+    const check=()=>{
+      if(video.readyState>=HTMLMediaElement.HAVE_CURRENT_DATA&&video.videoWidth>0&&video.videoHeight>0)finish();
+    };
+    const onError=()=>{
+      const mediaError=video.error;
+      finish(new Error("The analyzed video could not be decoded by this browser (media error "+(mediaError?.code??"unknown")+")."));
+    };
+    const timer=setTimeout(()=>finish(new Error("The analyzed video did not produce a visible frame within "+(timeoutMs/1000)+" seconds.")),timeoutMs);
+    video.addEventListener("loadeddata",check);
+    video.addEventListener("canplay",check);
+    video.addEventListener("error",onError);
+    check();
+  });
+}
 async function analyzeUploadedVideo(file){
   stopFrameTransfer();
   if(state.cameraStream)state.cameraStream.getTracks().forEach(t=>t.stop());
@@ -187,6 +216,10 @@ async function analyzeUploadedVideo(file){
   video.style.width="";
   video.style.height="";
   video.hidden=false;
+  video.controls=true;
+  video.muted=true;
+  video.playsInline=true;
+  video.preload="auto";
   const previewUrl=URL.createObjectURL(file);
   video.src=previewUrl;
   await video.play().catch(()=>{});
@@ -209,29 +242,35 @@ async function analyzeUploadedVideo(file){
     $("#videoTitle").textContent="AI analysis in progress";
     log("Upload complete · background analysis started","green");
     const result=await waitForVideoJob(job.job_id,videoAnalysisAbort.signal);
-    updateAnalysisProgress("complete",100,"Analysis complete · downloading the annotated video…");
-    // Stream the result directly in the native player; no JS Blob download.
+    updateAnalysisProgress("complete",100,"Analysis complete · preparing the video player…");
     state.videoUrl="/api/analyze-video/"+encodeURIComponent(job.job_id)+"/result";
+    video.pause();
     video.src=state.videoUrl;
     video.load();
+    await waitForVideoFrame(video);
     URL.revokeObjectURL(previewUrl);
-    await video.play().catch(()=>{});
-    state.running=true;
+    try{
+      await video.play();
+    }catch(playError){
+      log("Video is ready; press Play in the video controls to start viewing ("+playError.name+").","blue");
+    }
+    state.running=!video.paused;
     showMedia();
     $("#liveBadge").textContent="ANALYZED";
     $("#fpsBadge").hidden=true;
     $("#pauseBtn").disabled=false;
+    $("#pauseBtn").textContent=video.paused?"▶　Resume":"Ⅱ　Pause";
     $("#cameraBtn").disabled=true;
     if(Array.isArray(result?.people))window.ActionUI.setState({people:result.people});
     $("#videoTitle").textContent="Video analysis complete";
-    $("#videoHelp").textContent=result.frames_analyzed+" frames analyzed · "+result.duration_seconds+" seconds of video";
-    log("Analysis complete · "+result.frames_analyzed+" frames processed","green");
+    $("#videoHelp").textContent=result.frames_analyzed+" frames analyzed · "+result.duration_seconds+" seconds of video · "+video.videoWidth+" × "+video.videoHeight;
+    log("Video player ready · "+video.videoWidth+" × "+video.videoHeight+" · "+result.frames_analyzed+" frames analyzed","green");
   }catch(error){
     URL.revokeObjectURL(previewUrl);
-    if(error.name!=="AbortError")log("Video analysis error: "+error.message,"red");
+    if(error.name!=="AbortError")log("Video analysis/playback error: "+error.message,"red");
     state.running=false;
     showEmpty();
-    $("#videoTitle").textContent=error.name==="AbortError"?"Analysis cancelled":"Video analysis failed";
+    $("#videoTitle").textContent=error.name==="AbortError"?"Analysis cancelled":"Video playback failed";
     $("#videoHelp").textContent=error.name==="AbortError"?"The video analysis was cancelled.":error.message;
   }finally{
     videoAnalysisAbort=null;
