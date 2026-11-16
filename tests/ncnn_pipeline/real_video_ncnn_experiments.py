@@ -68,7 +68,7 @@ def read_video():
 def export_models():
     model_dir = OUT / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
-    yolo_dir = model_dir / "yolo26n_pose_ncnn"
+    yolo_dir = model_dir / "yolo26n-pose_ncnn_model"
     yolo_start = time.perf_counter()
     if not yolo_dir.exists():
         YOLO(YOLO_MODEL).export(format="ncnn", half=True, imgsz=640, device="cpu")
@@ -80,6 +80,34 @@ def export_models():
                 raise RuntimeError("Ultralytics NCNN export did not create an NCNN model directory")
             exported = candidates[0]
         exported.rename(yolo_dir)
+    required_yolo_files = (yolo_dir / "model.ncnn.param", yolo_dir / "model.ncnn.bin")
+    if not yolo_dir.is_dir() or not all(path.is_file() for path in required_yolo_files):
+        raise RuntimeError(
+            f"Invalid YOLO NCNN export directory: {yolo_dir}; "
+            "expected model.ncnn.param and model.ncnn.bin"
+        )
+
+    yolo = YOLO(str(yolo_dir), task="pose")
+    probe = np.zeros((640, 640, 3), dtype=np.uint8)
+    probe_start = time.perf_counter()
+    probe_results = yolo.predict(
+        probe, imgsz=640, verbose=False, conf=CONF, device="cpu"
+    )
+    if len(probe_results) != 1:
+        raise RuntimeError("YOLO NCNN predict preflight did not return one result")
+    if os.environ.get("USE_TRACKER", "1") == "1":
+        tracker_results = yolo.track(
+            probe, persist=False, tracker="bytetrack.yaml",
+            verbose=False, conf=CONF, device="cpu"
+        )
+        if len(tracker_results) != 1:
+            raise RuntimeError("YOLO NCNN tracking preflight did not return one result")
+    yolo_preflight_seconds = time.perf_counter() - probe_start
+    print(
+        f"YOLO NCNN preflight passed: {yolo_dir.name}; "
+        f"predict{' + track' if os.environ.get('USE_TRACKER', '1') == '1' else ''}",
+        flush=True,
+    )
     yolo_export_seconds = time.perf_counter() - yolo_start
 
     torch.set_num_threads(2)
@@ -118,11 +146,12 @@ def export_models():
     if net.load_param(str(param)) != 0 or net.load_model(str(binary)) != 0:
         raise RuntimeError("NCNN could not load converted ST-GCN++")
     return {
-        "yolo": YOLO(str(yolo_dir)),
+        "yolo": yolo,
         "gcn": gcn,
         "ncnn": net,
         "export_times": {
             "yolo_ncnn_export_seconds": round(yolo_export_seconds, 4),
+            "yolo_ncnn_preflight_seconds": round(yolo_preflight_seconds, 4),
             "gcn_pnnx_conversion_seconds": round(pnnx_seconds, 4),
         },
     }
@@ -209,7 +238,6 @@ def run():
     records = defaultdict(lambda: deque(maxlen=GCN_WINDOW))
     latest_pose = {}
     latest_gray = None
-    latest_frame_index = None
     idless_slot = 1
     detection_count = 0
     flow_success = 0
@@ -223,8 +251,6 @@ def run():
         block = frames[block_start:block_start + CHUNK]
         anchors = positions if real_count < CHUNK else set(range(CHUNK))
         block_poses = {}
-        prev_gray = None
-        active_ids = set()
 
         for offset, original in enumerate(block):
             index = block_start + offset
@@ -232,10 +258,15 @@ def run():
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             if offset in anchors:
                 start = time.perf_counter()
-                results = yolo.track(
-                    frame, persist=use_tracker, tracker="bytetrack.yaml" if use_tracker else None,
-                    verbose=False, conf=CONF, device="cpu"
-                )
+                if use_tracker:
+                    results = yolo.track(
+                        frame, persist=True, tracker="bytetrack.yaml",
+                        verbose=False, conf=CONF, device="cpu"
+                    )
+                else:
+                    results = yolo.predict(
+                        frame, verbose=False, conf=CONF, device="cpu"
+                    )
                 yolo_times.append(time.perf_counter() - start)
                 result = results[0]
                 poses = result.keypoints.data.cpu().numpy() if result.keypoints is not None else np.empty((0,17,3))
@@ -254,18 +285,8 @@ def run():
                     if pi >= len(ids):
                         continue
                     tid = int(ids[pi])
-                    if resize:
-                        # Undo letterbox to original pixel coordinates before GCN preprocessing.
-                        h0, w0 = original.shape[:2]
-                        scale = min(256 / w0, 256 / h0)
-                        nw, nh = max(1, round(w0 * scale)), max(1, round(h0 * scale))
-                        x0, y0 = (256 - nw) // 2, (256 - nh) // 2
-                        pose = pose.copy()
-                        pose[:,0] = (pose[:,0] - x0) / scale
-                        pose[:,1] = (pose[:,1] - y0) / scale
                     block_poses.setdefault(tid, {})[offset] = pose.astype(np.float32)
                     latest_pose[tid] = pose.astype(np.float32)
-                    active_ids.add(tid)
                     detection_count += 1
                 frame_detection_counts.append(len(poses))
             else:
@@ -282,11 +303,10 @@ def run():
                 flow_times.append(time.perf_counter() - start)
                 frame_detection_counts.append(len(latest_pose))
             latest_gray = gray
-            latest_frame_index = index
 
         # Ensure every frame contributes a pose: interpolate only between valid anchor/flow samples
         # for the same ByteTrack ID; missing poses remain zero-confidence and are rejected by GCN.
-        all_ids = sorted({tid for values in block_poses.values() for tid in values})
+        all_ids = sorted(set(records) | {tid for values in block_poses.values() for tid in values})
         for tid in all_ids:
             known = sorted(block_poses[tid])
             for offset in range(CHUNK):
@@ -310,6 +330,14 @@ def run():
                     seq.append(pose)
             if len(seq) >= GCN_WINDOW:
                 sequence = np.stack(list(seq)[-GCN_WINDOW:])
+                if resize:
+                    scale = min(256 / original_w, 256 / original_h)
+                    resized_w = max(1, round(original_w * scale))
+                    resized_h = max(1, round(original_h * scale))
+                    pad_x = (256 - resized_w) // 2
+                    pad_y = (256 - resized_h) // 2
+                    sequence[:, :, 0] = (sequence[:, :, 0] - pad_x) / scale
+                    sequence[:, :, 1] = (sequence[:, :, 1] - pad_y) / scale
                 try:
                     valid_frames = int((sequence[:,:,2].sum(axis=1) > 0).sum())
                     if valid_frames < 60:

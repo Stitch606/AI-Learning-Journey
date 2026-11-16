@@ -17,11 +17,11 @@ jobs:
     timeout-minutes: 120
     env:
       RUN_NAME: "ncnn-yolo30-direct"
-      MODE: "NCNN YOLO every frame, direct GCN"
+      MODE: "NCNN YOLO every frame, direct GCN (256x256)"
       REAL_PER_30: "30"
       USE_TRACKER: "0"
       USE_FLOW: "0"
-      RESIZE_256: "0"
+      RESIZE_256: "1"
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
       PYTHONUNBUFFERED: "1"
