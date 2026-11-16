@@ -28,7 +28,7 @@ jobs:
       - name: Download saved YOLO Large keypoints from the completed detection run
         uses: actions/download-artifact@v4
         with:
-          name: kth-yolo-large-diagnostics.zip
+          name: kth-yolo-large-pytorch-gcn-report
           repository: Stitch606/AI-Learning-Journey
           run-id: 43927154130
           github-token: ${{ secrets.GITHUB_TOKEN }}
