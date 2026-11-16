@@ -1,0 +1,66 @@
+name: Real Video YOLO + ST-GCN++ Evaluation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/real-video-pipeline-eval.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      YOLO_VERBOSE: "false"
+    steps:
+      - name: Checkout main with Git LFS assets
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project inference dependencies
+        run: |
+          pip install --no-cache-dir -r huggingface-space/requirements.txt
+
+      - name: Verify model checkpoint and download source video
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          checkpoint = Path("huggingface-space/process/weights/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth")
+          if not checkpoint.is_file() or checkpoint.stat().st_size < 1024:
+              raise SystemExit(f"ST-GCN++ checkpoint missing or incomplete: {checkpoint}")
+          print(f"Checkpoint present: {checkpoint.stat().st_size:,} bytes")
+          PY
+
+      - name: Run YOLO-only, GCN-only, and combined streaming evaluations
+        run: python tests/real_video_pipeline_eval.py
+
+      - name: Upload evaluation report and annotated video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-video-yolo-stgcn-evaluation
+          path: |
+            artifacts/evaluation_report.json
+            artifacts/combined_annotated.mp4
+            artifacts/source_handwaving.avi
+          if-no-files-found: warn
+          retention-days: 14
