@@ -363,14 +363,16 @@ class STGCNPPMultiPerson(nn.Module):
         return arr
 
     @classmethod
-    def _prepare_single_person(cls, keypoints, image_size=(1920, 1080), clip_len=100):
-        """Convert one person's raw YOLO sequence [T,17,3] to JM [100,17,3]."""
+    def _prepare_joint_motion_sequence(cls, keypoints, image_size=(1920, 1080)):
+        """Apply PYSKL PreNormalize2D -> GenSkeFeat(JM) to the full sequence."""
         arr = cls.validate_keypoints(keypoints)
-        if clip_len != 100:
-            raise ValueError("This checkpoint expects exactly 100 frames")
+        if len(image_size) != 2:
+            raise ValueError("image_size must be (width, height)")
+        w, h = int(image_size[0]), int(image_size[1])
+        if w <= 0 or h <= 0:
+            raise ValueError("image_size values must be positive")
 
         full = arr.copy()
-        h, w = int(image_size[1]), int(image_size[0])
         xy = full[..., :2]
         score = full[..., 2]
         maskout = score <= 0.01
@@ -380,8 +382,17 @@ class STGCNPPMultiPerson(nn.Module):
         xy[..., 1][maskout] = 0.0
 
         jm_full = np.zeros_like(full, dtype=np.float32)
-        jm_full[:-1, :, :2] = np.diff(xy, axis=0)
-        jm_full[:-1, :, 2] = (score[:-1] + score[1:]) / 2.0
+        if len(full) > 1:
+            jm_full[:-1, :, :2] = np.diff(xy, axis=0)
+            jm_full[:-1, :, 2] = (score[:-1] + score[1:]) / 2.0
+        return jm_full
+
+    @classmethod
+    def _prepare_single_person(cls, keypoints, image_size=(1920, 1080), clip_len=100):
+        """Prepare one clip using PYSKL's full-sequence JM then 100-frame sampling."""
+        if clip_len != 100:
+            raise ValueError("This checkpoint expects exactly 100 frames")
+        jm_full = cls._prepare_joint_motion_sequence(keypoints, image_size=image_size)
 
         num_frames = len(jm_full)
         rng = np.random.RandomState(255)
@@ -500,7 +511,7 @@ class STGCNPPMultiPerson(nn.Module):
         }
 
     def predict(self, keypoints, topk=5, person_ids=None,
-                image_size=(1920, 1080)):
+                image_size=(1920, 1080), input_is_joint_motion=False):
         """Predict actions directly from keypoint data; no video frame is required.
 
         Accepted raw input layouts:
@@ -559,10 +570,18 @@ class STGCNPPMultiPerson(nn.Module):
         for b in range(batch_size):
             for clip in range(num_clips):
                 for person in range(person_count):
-                    packed[b, clip, person] = self._prepare_single_person(
-                        arr[b, clip, :, person],
-                        image_size=image_size,
-                    )
+                    person_sequence = arr[b, clip, :, person]
+                    if input_is_joint_motion:
+                        if num_frames != 100:
+                            raise ValueError(
+                                "Precomputed Joint Motion input must contain exactly 100 frames"
+                            )
+                        packed[b, clip, person] = person_sequence
+                    else:
+                        packed[b, clip, person] = self._prepare_single_person(
+                            person_sequence,
+                            image_size=image_size,
+                        )
 
         tensor = torch.from_numpy(packed).to(self.device)
         self.eval()
