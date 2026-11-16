@@ -40,8 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
           pip install numpy==1.26.4 opencv-python-headless ultralytics
+          pip install --force-reinstall torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu
 
       - name: Place and verify the exact fine-tuned checkpoint
         run: |
