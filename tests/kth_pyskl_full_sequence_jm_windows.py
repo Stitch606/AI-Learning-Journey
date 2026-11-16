@@ -255,6 +255,57 @@ def main():
         for handle in handles:
             handle.remove()
 
+    # Diagnostic matrix: distinguish the fine-tuned weights from coordinate
+    # normalization scale. The default PYSKL image shape is also tested explicitly.
+    diagnostic_matrix = {}
+    base_checkpoint = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
+    default_shape_jm = pyskl_reference_joint_motion(raw, (1920, 1080))
+
+    diagnostic_models = {
+        "fine_tuned_actual_frame_shape": (model, model_full_jm),
+        "fine_tuned_pyskl_default_shape_1920x1080": (model, default_shape_jm),
+    }
+    base_model = STGCNPPMultiPerson(
+        checkpoint_path=str(base_checkpoint),
+        device="cpu",
+        max_persons=10,
+        strict=True,
+    ).eval()
+    diagnostic_models["original_pretrained_actual_frame_shape"] = (base_model, model_full_jm)
+    diagnostic_models["original_pretrained_pyskl_default_shape_1920x1080"] = (base_model, default_shape_jm)
+
+    for variant_name, (variant_model, full_jm) in diagnostic_models.items():
+        variant_rows = []
+        for window_index, start in enumerate(WINDOW_STARTS, start=1):
+            end = start + WINDOW_SIZE
+            variant_result = variant_model.predict(
+                full_jm[start:end].copy(),
+                topk=5,
+                person_ids=[1],
+                image_size=IMAGE_SIZE,
+                input_is_joint_motion=True,
+            )["persons"][0]
+            hand_idx = next(
+                index for index, name in enumerate(variant_model.class_names)
+                if name.strip().lower() == "hand waving"
+            )
+            variant_rows.append({
+                "window_index": window_index,
+                "frames": [start, end - 1],
+                "top1": variant_result["action"],
+                "top1_confidence": float(variant_result["confidence"]),
+                "hand_waving_probability": float(variant_result["probabilities"][hand_idx]),
+                "top5": [
+                    {
+                        "action": row["action"],
+                        "class_id": int(row["class_id"]),
+                        "confidence": float(row["confidence"]),
+                    }
+                    for row in variant_result["top_predictions"]
+                ],
+            })
+        diagnostic_matrix[variant_name] = variant_rows
+
     report = {
         "test": "KTH deterministic 100-frame windows with full-sequence PYSKL Joint Motion",
         "ground_truth": "Hand Waving",
@@ -280,6 +331,7 @@ def main():
             "wall_seconds": round(time.perf_counter() - started_all, 4),
             "forward_hook_events": len(hook_events),
         },
+        "diagnostic_matrix": diagnostic_matrix,
         "tracks": track_reports,
     }
     REPORT_PATH.write_text(json.dumps(report, indent=2), encoding="utf-8")
