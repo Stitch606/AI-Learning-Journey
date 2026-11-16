@@ -63,9 +63,11 @@ def main():
     x = torch.from_numpy(prepared).reshape(1, 1, 1, 100, 17, 3)
     with torch.inference_mode():
         logits = gcn._person_clip_logits(x)
-        torch_probs = torch.softmax(logits.mean(dim=1).squeeze(0).squeeze(0), dim=-1).cpu().numpy()
+        torch_logits = logits.mean(dim=1).squeeze(0).squeeze(0).cpu().numpy()
+        torch_probs = torch.softmax(torch.from_numpy(torch_logits), dim=-1).numpy()
 
     ncnn_result = exp.gcn_ncnn_predict(net, prepared)
+    ncnn_logits = np.asarray(ncnn_result["logits"], dtype=np.float32)
     ncnn_probs = np.asarray(ncnn_result["probabilities"], dtype=np.float32)
     report = {
         "video": "KTH person15_handwaving_d1_uncomp.avi",
@@ -85,6 +87,8 @@ def main():
         "ncnn_top1_class": int(ncnn_probs.argmax()),
         "ncnn_top1_action": gcn.class_names[int(ncnn_probs.argmax())],
         "ncnn_top1_confidence": float(ncnn_probs.max()),
+        "max_abs_logit_difference": float(np.max(np.abs(torch_logits - ncnn_logits))),
+        "mean_abs_logit_difference": float(np.mean(np.abs(torch_logits - ncnn_logits))),
         "max_abs_probability_difference": float(np.max(np.abs(torch_probs - ncnn_probs))),
         "mean_abs_probability_difference": float(np.mean(np.abs(torch_probs - ncnn_probs))),
         "wall_seconds": round(time.perf_counter() - start, 4),
