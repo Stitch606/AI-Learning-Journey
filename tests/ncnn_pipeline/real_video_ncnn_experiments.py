@@ -145,6 +145,42 @@ def export_models():
     net.opt.num_threads = 2
     if net.load_param(str(param)) != 0 or net.load_model(str(binary)) != 0:
         raise RuntimeError("NCNN could not load converted ST-GCN++")
+
+    parity_rng = np.random.default_rng(606)
+    parity_sample = parity_rng.normal(0.0, 0.15, size=(100, 17, 3)).astype(np.float32)
+    parity_sample[..., 2] = parity_rng.uniform(0.05, 1.0, size=(100, 17)).astype(np.float32)
+    with torch.inference_mode():
+        expected = ExportOne(gcn).eval()(torch.from_numpy(parity_sample)).cpu().numpy()
+
+    parity_start = time.perf_counter()
+    extractor = net.create_extractor()
+    parity_mat = ncnn.Mat(np.ascontiguousarray(parity_sample))
+    code = extractor.input("in0", parity_mat)
+    if code != 0:
+        raise RuntimeError(f"NCNN GCN parity input failed: {code}")
+    code, parity_output = extractor.extract("out0")
+    if code != 0:
+        raise RuntimeError(f"NCNN GCN parity output failed: {code}")
+    actual = np.asarray(parity_output, dtype=np.float32).reshape(-1)
+    expected = expected.reshape(-1)
+    if actual.shape != expected.shape or not np.isfinite(actual).all():
+        raise RuntimeError(
+            f"Invalid NCNN GCN parity output: actual={actual.shape}, expected={expected.shape}"
+        )
+    parity_error = np.abs(actual - expected)
+    parity_max_abs = float(parity_error.max())
+    parity_mean_abs = float(parity_error.mean())
+    if not np.allclose(actual, expected, atol=2e-3, rtol=2e-3):
+        raise RuntimeError(
+            "NCNN/PyTorch ST-GCN++ parity failed: "
+            f"max_abs={parity_max_abs:.6g}, mean_abs={parity_mean_abs:.6g}"
+        )
+    parity_seconds = time.perf_counter() - parity_start
+    print(
+        "ST-GCN++ NCNN parity passed: "
+        f"max_abs={parity_max_abs:.6g}, mean_abs={parity_mean_abs:.6g}",
+        flush=True,
+    )
     return {
         "yolo": yolo,
         "gcn": gcn,
@@ -153,6 +189,9 @@ def export_models():
             "yolo_ncnn_export_seconds": round(yolo_export_seconds, 4),
             "yolo_ncnn_preflight_seconds": round(yolo_preflight_seconds, 4),
             "gcn_pnnx_conversion_seconds": round(pnnx_seconds, 4),
+            "gcn_ncnn_parity_seconds": round(parity_seconds, 4),
+            "gcn_ncnn_parity_max_abs_error": parity_max_abs,
+            "gcn_ncnn_parity_mean_abs_error": parity_mean_abs,
         },
     }
 
