@@ -123,7 +123,7 @@ def export_models(inference_size):
         def forward(self, x):
             x = x.unsqueeze(0).unsqueeze(0).unsqueeze(0)
             logits = self.source._person_clip_logits(x)
-            return torch.softmax(logits.mean(dim=1).squeeze(0).squeeze(0), dim=-1)
+            return logits.mean(dim=1).squeeze(0).squeeze(0)
 
     example = torch.zeros((100, 17, 3), dtype=torch.float32)
     traced_path = model_dir / "stgcnpp_prepared.pt"
@@ -150,7 +150,8 @@ def export_models(inference_size):
     parity_sample = parity_rng.normal(0.0, 0.15, size=(100, 17, 3)).astype(np.float32)
     parity_sample[..., 2] = parity_rng.uniform(0.05, 1.0, size=(100, 17)).astype(np.float32)
     with torch.inference_mode():
-        expected = ExportOne(gcn).eval()(torch.from_numpy(parity_sample)).cpu().numpy()
+        expected_logits = ExportOne(gcn).eval()(torch.from_numpy(parity_sample))
+        expected = torch.softmax(expected_logits, dim=-1).cpu().numpy()
 
     parity_start = time.perf_counter()
     extractor = net.create_extractor()
@@ -206,15 +207,18 @@ def gcn_ncnn_predict(net, prepared):
     code, output = extractor.extract("out0")
     if code != 0:
         raise RuntimeError(f"NCNN GCN output failed: {code}")
-    probabilities = np.asarray(output, dtype=np.float32).reshape(-1)
-    if probabilities.size != 60 or not np.isfinite(probabilities).all():
-        raise RuntimeError(f"Invalid NCNN GCN output shape/values: {probabilities.shape}")
+    logits = np.asarray(output, dtype=np.float32).reshape(-1)
+    if logits.size != 60 or not np.isfinite(logits).all():
+        raise RuntimeError(f"Invalid NCNN GCN logits shape/values: {logits.shape}")
+    shifted = logits - float(logits.max())
+    exp_logits = np.exp(shifted)
+    probabilities = exp_logits / float(exp_logits.sum())
     probability_sum = float(probabilities.sum())
-    if not np.isclose(probability_sum, 1.0, atol=1e-3):
+    if not np.isclose(probability_sum, 1.0, atol=1e-6):
         raise RuntimeError(f"NCNN GCN output is not a probability distribution: sum={probability_sum:.8f}")
     top = int(probabilities.argmax())
     return {"class_id": top, "confidence": float(probabilities[top]),
-            "probabilities": probabilities.tolist()}
+            "probabilities": probabilities.tolist(), "logits": logits.tolist()}
 
 
 def resize_frame(frame, enabled, size):
