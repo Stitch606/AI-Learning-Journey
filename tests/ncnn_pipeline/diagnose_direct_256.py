@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+import subprocess
 from collections import deque
 from pathlib import Path
 
@@ -33,7 +34,21 @@ def main():
         raise RuntimeError(f"Expected 120 source frames, got {len(frames)}")
 
     models = exp.export_models(256)
-    yolo, gcn, net = models["yolo"], models["gcn"], models["ncnn"]
+    yolo, gcn = models["yolo"], models["gcn"]
+    model_dir = exp.OUT / "models"
+    traced_path = model_dir / "stgcnpp_prepared.pt"
+    subprocess.run(
+        ["pnnx", str(traced_path), "inputshape=[100,17,3]", "device=cpu", "fp16=0", "optlevel=0"],
+        cwd=model_dir, check=True, text=True
+    )
+    import ncnn
+    net = ncnn.Net()
+    net.opt.use_vulkan_compute = False
+    net.opt.num_threads = 2
+    if net.load_param(str(model_dir / "stgcnpp_prepared.ncnn.param")) != 0:
+        raise RuntimeError("Could not load optlevel=0 NCNN parameters")
+    if net.load_model(str(model_dir / "stgcnpp_prepared.ncnn.bin")) != 0:
+        raise RuntimeError("Could not load optlevel=0 NCNN weights")
     sequence = deque(maxlen=100)
     original_h, original_w = frames[0].shape[:2]
     start = time.perf_counter()
@@ -76,6 +91,7 @@ def main():
         "resize": "letterbox_256x256",
         "ncnn_weight_storage": "FP32 (PNNX fp16=0)",
         "ncnn_output": "raw logits followed by stable NumPy softmax",
+        "ncnn_optlevel": 0,
         "valid_pose_frames": int((seq[:, :, 2].sum(axis=1) > 0).sum()),
         "prepared_min": float(prepared.min()),
         "prepared_max": float(prepared.max()),
