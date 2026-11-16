@@ -149,18 +149,70 @@ jobs:
                   "output_frames": output_frames,
                   "codec": status["result"]["codec"],
               })
+              Path("artifacts").mkdir(exist_ok=True)
+              Path("artifacts/video-result-url.txt").write_text(result_url, encoding="utf-8")
           PY
       - name: Capture and test desktop/mobile UI
         run: |
           mkdir -p artifacts
           node <<'NODE'
           const { chromium } = require("playwright");
+          const fs = require("fs");
           (async () => {
             const browser = await chromium.launch({ headless: true });
             const errors = [];
             const page = await browser.newPage({ viewport: { width: 1280, height: 1170 } });
             page.on("pageerror", error => errors.push(error.message));
             await page.goto("http://127.0.0.1:7860/", { waitUntil: "networkidle" });
+            const resultUrl = fs.readFileSync("artifacts/video-result-url.txt", "utf8").trim();
+            const playback = await page.evaluate(async url => {
+              const video = document.querySelector("#cameraVideo");
+              video.hidden = false;
+              video.controls = true;
+              video.muted = true;
+              video.src = url;
+              video.load();
+              await new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error("Browser video did not decode its first frame")), 20000);
+                const cleanup = () => {
+                  clearTimeout(timer);
+                  video.removeEventListener("loadeddata", ready);
+                  video.removeEventListener("error", failed);
+                };
+                const ready = () => {
+                  if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+                    cleanup();
+                    resolve();
+                  }
+                };
+                const failed = () => {
+                  cleanup();
+                  reject(new Error("Browser video decode failed: " + (video.error?.code ?? "unknown")));
+                };
+                video.addEventListener("loadeddata", ready);
+                video.addEventListener("error", failed);
+                ready();
+              });
+              const canvas = document.createElement("canvas");
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              const context = canvas.getContext("2d");
+              context.drawImage(video, 0, 0);
+              const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+              let sum = 0, sumSquares = 0, count = 0;
+              for (let i = 0; i < pixels.length; i += 4) {
+                const value = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+                sum += value;
+                sumSquares += value * value;
+                count++;
+              }
+              const mean = sum / count;
+              const deviation = Math.sqrt(Math.max(0, sumSquares / count - mean * mean));
+              return { width: video.videoWidth, height: video.videoHeight, readyState: video.readyState, mean, deviation };
+            }, resultUrl);
+            if (playback.width <= 0 || playback.height <= 0 || playback.deviation < 10)
+              throw new Error("Browser player rendered a blank/dark frame: " + JSON.stringify(playback));
+            console.log("Native browser video playback passed:", playback);
             if (await page.locator(".layout").count() !== 1) throw new Error("Dashboard did not render");
             for (const width of [1024, 1280, 1440, 1920]) {
               await page.setViewportSize({ width, height: 1000 });
