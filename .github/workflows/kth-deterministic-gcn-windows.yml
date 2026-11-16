@@ -1,0 +1,77 @@
+name: KTH deterministic 100-frame GCN trace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/kth_deterministic_gcn_windows.py"
+      - ".github/workflows/kth-deterministic-gcn-windows.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download saved YOLO Large keypoints from the completed detection run
+        uses: actions/download-artifact@v4
+        with:
+          name: kth-yolo-large-diagnostics.zip
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 43927154130
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          path: yolo-artifact
+
+      - name: Download the exact 84.81% fine-tuned GCN checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: stgcnpp-ntu60-xsub-finetuned-resumed
+          repository: Stitch606/AI-Learning-Journey
+          run-id: 42467266854
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          path: training-artifact
+
+      - name: Install native PyTorch inference stack
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install numpy==1.26.4
+          pip install --force-reinstall torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Place and verify model checkpoint and YOLO keypoints
+        run: |
+          set -euo pipefail
+          find yolo-artifact -maxdepth 3 -type f -print
+          keypoints="$(find yolo-artifact -type f -name 'person_keypoints.npz' -print -quit)"
+          test -n "$keypoints"
+          if [ "$keypoints" != "yolo-artifact/person_keypoints.npz" ]; then cp "$keypoints" yolo-artifact/person_keypoints.npz; fi
+          checkpoint="$(find training-artifact -type f -name 'stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth' -print -quit)"
+          test -n "$checkpoint"
+          mkdir -p GCN/checkpoints
+          cp "$checkpoint" GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+          test "$(stat -c%s GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth)" -gt 1000000
+          ls -lh yolo-artifact/person_keypoints.npz GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+
+      - name: Run deterministic contiguous 100-frame windows with tracing
+        run: python tests/kth_deterministic_gcn_windows.py
+
+      - name: Upload per-window report and PyTorch traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kth-deterministic-gcn-traces
+          path: artifacts/kth_deterministic_window_trace/
+          if-no-files-found: error
+          retention-days: 14
