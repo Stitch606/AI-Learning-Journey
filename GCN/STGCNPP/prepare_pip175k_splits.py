@@ -37,16 +37,11 @@ def _group_id(video, meta):
         value = meta.get(key)
         if value not in (None, ""):
             return f"{key}:{value}"
-    # A filename may identify a recording/session. Do not silently fall back
-    # to per-clip IDs because that would permit subject leakage across splits.
-    for key in ("filename", "video", "source"):
-        value = meta.get(key)
-        if value:
-            return f"source:{Path(str(value)).stem}"
     raise ValueError(
         "No subject/collector/session identity found in metadata. "
-        "Refusing a clip-random split that could leak the same person "
-        "across train/validation/test. Inspect the PIP metadata schema first."
+        "Refusing to guess groups from clip filenames because that can leak "
+        "the same person across train/validation/test. Inspect the PIP "
+        "metadata schema and add its verified identity field to GROUP_KEYS."
     )
 
 
