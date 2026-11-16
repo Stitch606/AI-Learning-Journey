@@ -59,7 +59,7 @@ jobs:
           test -n "$keypoints"
           test -n "$checkpoint"
           mkdir -p GCN/checkpoints
-          cp "$keypoints" yolo-artifact/person_keypoints.npz
+          if [ "$keypoints" != "yolo-artifact/person_keypoints.npz" ]; then cp "$keypoints" yolo-artifact/person_keypoints.npz; fi
           cp "$checkpoint" GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
           ls -lh yolo-artifact/person_keypoints.npz GCN/checkpoints/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
 
