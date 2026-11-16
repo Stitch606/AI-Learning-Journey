@@ -131,7 +131,7 @@ def export_models(inference_size):
     traced.save(str(traced_path))
     pnnx_start = time.perf_counter()
     subprocess.run(
-        ["pnnx", str(traced_path), "inputshape=[100,17,3]", "device=cpu"],
+        ["pnnx", str(traced_path), "inputshape=[100,17,3]", "device=cpu", "fp16=0"],
         cwd=model_dir, check=True, text=True
     )
     param = model_dir / "stgcnpp_prepared.ncnn.param"
@@ -209,6 +209,9 @@ def gcn_ncnn_predict(net, prepared):
     probabilities = np.asarray(output, dtype=np.float32).reshape(-1)
     if probabilities.size != 60 or not np.isfinite(probabilities).all():
         raise RuntimeError(f"Invalid NCNN GCN output shape/values: {probabilities.shape}")
+    probability_sum = float(probabilities.sum())
+    if not np.isclose(probability_sum, 1.0, atol=1e-3):
+        raise RuntimeError(f"NCNN GCN output is not a probability distribution: sum={probability_sum:.8f}")
     top = int(probabilities.argmax())
     return {"class_id": top, "confidence": float(probabilities[top]),
             "probabilities": probabilities.tolist()}
@@ -423,6 +426,7 @@ def run():
         "optical_flow_rejected_updates": flow_rejected,
         "person_detections": detection_count,
         "gcn_ncnn_calls": len(gcn_times),
+        "gcn_ncnn_weight_storage": "FP32 (PNNX fp16=0)",
         "timing_seconds": {
             "yolo_total": round(sum(yolo_times), 5),
             "yolo_mean": round(float(np.mean(yolo_times)), 6) if yolo_times else 0,
