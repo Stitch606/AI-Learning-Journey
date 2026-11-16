@@ -1,0 +1,51 @@
+name: Diagnose real-input NCNN parity for direct 256px run
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tests/ncnn_pipeline/diagnose_direct_256.py"
+      - ".github/workflows/diagnose-ncnn-direct-256.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      PYTHONUNBUFFERED: "1"
+      YOLO_VERBOSE: "false"
+    steps:
+      - name: Checkout main and current Hugging Face checkpoint
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          lfs: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install NCNN and inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir numpy opencv-python-headless ultralytics torch pnnx ncnn
+      - name: Verify checkpoint
+        run: |
+          test -s huggingface-space/process/weights/stgcnpp_jm_ntu60_xsub_hrnet_finetuned.pth
+      - name: Compare PyTorch and NCNN on the real 256px pose sequence
+        run: python tests/ncnn_pipeline/diagnose_direct_256.py
+      - name: Upload real-input diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-ncnn-direct-256
+          path: |
+            artifacts/diagnose-direct-256/report.json
+            artifacts/diagnose-direct-256/prepared_input.npy
+          if-no-files-found: warn
+          retention-days: 14
