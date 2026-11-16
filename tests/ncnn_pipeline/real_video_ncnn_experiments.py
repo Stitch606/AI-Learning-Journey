@@ -308,6 +308,7 @@ def run():
         # for the same ByteTrack ID; missing poses remain zero-confidence and are rejected by GCN.
         all_ids = sorted(set(records) | {tid for values in block_poses.values() for tid in values})
         for tid in all_ids:
+            block_poses.setdefault(tid, {})
             known = sorted(block_poses[tid])
             for offset in range(CHUNK):
                 if offset in block_poses[tid]:
