@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 import random
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 DATA_PATH = ROOT / "data" / "hmdb51_hrnet.pkl"
 BASE_CHECKPOINT = ROOT / "GCN" / "checkpoints" / "stgcnpp_jm_ntu60_xsub_hrnet.pth"
 OUTPUT_DIR = ROOT / "hmdb51_transfer_outputs"
