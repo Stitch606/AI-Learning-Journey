@@ -16,6 +16,33 @@ const renderer = new PoseRenderer(canvas, {
   pointRadius: 3.1
 });
 
+const actionStatus = document.querySelector("#action-status");
+const actionResult = document.querySelector("#action-result");
+const actionWorker = new Worker("./action-worker.js?v=1", { type: "module" });
+let latestDetections = [];
+let latestAction = null;
+let latestWidth = 0;
+let latestHeight = 0;
+
+actionWorker.addEventListener("message", event => {
+  const message = event.data;
+  if (message.type === "progress") actionStatus.textContent = message.message;
+  if (message.type === "ready") {
+    actionStatus.textContent = message.provider;
+    actionResult.textContent = "Waiting for 100 frames";
+  }
+  if (message.type === "action") {
+    latestAction = message.action;
+    actionResult.textContent = `${message.action.label} · ${(message.action.confidence * 100).toFixed(1)}% · ${message.action.inferenceMs.toFixed(1)} ms`;
+    renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
+  }
+  if (message.type === "error" || message.type === "inference-error") {
+    actionStatus.textContent = "Action model error";
+    actionResult.textContent = message.message;
+  }
+});
+actionWorker.postMessage({ type: "init" });
+
 async function prepareThreadIsolation() {
   if (!("serviceWorker" in navigator)) return false;
   try {
@@ -91,7 +118,16 @@ function launchWorker(forceSingleThread = false) {
     }
 
     if (message.type === "result") {
-      renderer.draw(message.detections, message.sourceWidth, message.sourceHeight);
+      latestDetections = message.detections;
+      latestWidth = message.sourceWidth;
+      latestHeight = message.sourceHeight;
+      renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
+      actionWorker.postMessage({
+        type: "pose-frame",
+        detections: message.detections,
+        sourceWidth: message.sourceWidth,
+        sourceHeight: message.sourceHeight
+      });
       inferenceBusy = false;
       processPendingFrame();
       return;
@@ -248,6 +284,10 @@ async function startCamera() {
     document.querySelector("#image-preview")?.remove();
     if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
     selectedImageUrl = null;
+    latestAction = null;
+    latestDetections = [];
+    actionResult.textContent = "Waiting for 100 frames";
+    actionWorker.postMessage({ type: "reset" });
     renderer.clear();
 
     cameraStream = await navigator.mediaDevices.getUserMedia({
@@ -281,6 +321,10 @@ imageInput.addEventListener("change", async () => {
   if (!file || !workerReady) return;
 
   stopCamera();
+  latestAction = null;
+  latestDetections = [];
+  actionResult.textContent = "Waiting for 100 frames";
+  actionWorker.postMessage({ type: "reset" });
   renderer.clear();
   if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
   selectedImageUrl = URL.createObjectURL(file);
@@ -320,6 +364,7 @@ window.addEventListener("pagehide", () => {
   stopCamera();
   pendingBitmap?.close();
   worker.terminate();
+  actionWorker.terminate();
   if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 });
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101018">
-  <title>YOLO Pose · NCNN Web</title>
+  <title>YOLO26 + ST-GCN++ · Browser Action Recognition</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -13,14 +13,14 @@
       <div class="brand-mark">Y</div>
       <div>
         <p class="eyebrow">ON-DEVICE COMPUTER VISION</p>
-        <h1>YOLO <span>POSE</span></h1>
+        <h1>YOLO <span>POSE</span> + ST-GCN++</h1>
       </div>
       <span class="engine-tag">NCNN · WASM SIMD + Threads</span>
     </header>
     <section class="intro">
       <p class="eyebrow">BROWSER INFERENCE</p>
       <h2>Pose estimation.<br><span>On your device.</span></h2>
-      <p class="subcopy">Nano model · FP16 · No inference server</p>
+      <p class="subcopy">Original two-person NTU60 model · Local device inference</p>
     </section>
     <section class="viewer-card" aria-label="Camera preview">
       <div class="viewer-head">
@@ -41,15 +41,21 @@
         <label class="secondary" for="image-input">Choose image</label>
         <input id="image-input" type="file" accept="image/*" hidden>
       </div>
+      <div class="action-readout">
+        <span class="info-label">SCENE ACTION</span>
+        <strong id="action-result">Waiting for 100 frames</strong>
+        <small id="action-status">Loading ST-GCN++ · WebGPU / WASM</small>
+      </div>
     </section>
     <section class="info-grid">
       <div class="info-card"><span class="info-label">MODEL</span><strong>YOLO26n-Pose</strong><small>Nano · 17 COCO keypoints</small></div>
       <div class="info-card"><span class="info-label">PRECISION</span><strong>FP16</strong><small>Half-precision weights</small></div>
-      <div class="info-card"><span class="info-label">EXECUTION</span><strong>Local browser</strong><small>No inference server</small></div>
+      <div class="info-card"><span class="info-label">ACTION MODEL</span><strong>ST-GCN++</strong><small>Original NTU60 · 2 people</small></div>
+      <div class="info-card"><span class="info-label">EXECUTION</span><strong>Visitor device</strong><small>WebGPU / WASM · No inference server</small></div>
     </section>
     <p id="notice" class="notice" role="status">Checking browser support…</p>
-    <footer>Images and camera frames stay on this device.</footer>
+    <footer>Camera frames stay on this device. The original NTU60 classifier returns one scene-level action for its two-person input.</footer>
   </main>
-  <script type="module" src="./app.js?v=4"></script>
+  <script type="module" src="./app.js?v=5"></script>
 </body>
 </html>

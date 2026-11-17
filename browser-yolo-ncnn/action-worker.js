@@ -1,0 +1,99 @@
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.mjs";
+
+const MODEL_URL = new URL("./model/stgcnpp_ntu60.onnx", import.meta.url).href;
+const LABELS_URL = new URL("./model/ntu60_labels.txt", import.meta.url).href;
+const T = 100, V = 17, M = 2, C = 3, STRIDE = 5;
+let session = null, labels = [], frames = [], count = 0, busy = false, provider = "WASM CPU";
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+function choosePeople(detections) {
+  return (detections || []).filter(d => Array.isArray(d.keypoints) && d.keypoints.length === V)
+    .sort((a,b) => (b.score || 0) - (a.score || 0)).slice(0,M)
+    .sort((a,b) => ((a.box?.[0] || 0) + (a.box?.[2] || 0)) - ((b.box?.[0] || 0) + (b.box?.[2] || 0)));
+}
+
+function makeInput() {
+  const normalized = Array.from({length:M}, () =>
+    Array.from({length:T}, () => Array.from({length:V}, () => [0,0,0])));
+  for (let t=0;t<T;t++) {
+    const f=frames[t];
+    for (let p=0;p<M;p++) {
+      const person=f.people[p];
+      if (!person) continue;
+      const w=f.width, h=f.height;
+      for (let j=0;j<V;j++) {
+        const k=person.keypoints[j] || [0,0,0];
+        const s=clamp(Number(k[2]) || 0,0,1);
+        if (s<=0.01) continue;
+        normalized[p][t][j]=[(Number(k[0])-w/2)/(w/2),(Number(k[1])-h/2)/(h/2),s];
+      }
+    }
+  }
+  const data=new Float32Array(M*T*V*C);
+  for(let p=0;p<M;p++) for(let t=0;t<T-1;t++) for(let j=0;j<V;j++) {
+    const a=normalized[p][t][j], b=normalized[p][t+1][j];
+    const i=(((p*T+t)*V+j)*C);
+    data[i]=b[0]-a[0]; data[i+1]=b[1]-a[1]; data[i+2]=(a[2]+b[2])*0.5;
+  }
+  return data;
+}
+
+function softmax(x) {
+  const m=Math.max(...x), e=x.map(v=>Math.exp(v-m)), s=e.reduce((a,b)=>a+b,0)||1;
+  return e.map(v=>v/s);
+}
+
+async function init() {
+  self.postMessage({type:"progress",message:"Loading original NTU60 ST-GCN++"});
+  labels=(await (await fetch(LABELS_URL)).text()).trim().split(/\r?\n/);
+  ort.env.logLevel="error";
+  ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+  ort.env.wasm.numThreads=self.crossOriginIsolated ? Math.max(1,Math.min(self.navigator.hardwareConcurrency||2,4)) : 1;
+  try {
+    if(!self.navigator.gpu) throw new Error("WebGPU unavailable");
+    session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["webgpu","wasm"],graphOptimizationLevel:"all"});
+    provider="WebGPU (WASM fallback)";
+  } catch(e) {
+    session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+    provider="WASM CPU";
+  }
+  self.postMessage({type:"ready",provider,classes:labels.length,inputShape:[1,1,2,100,17,3]});
+}
+
+async function infer() {
+  if(busy || !session || frames.length<T) return;
+  busy=true;
+  try {
+    const start=performance.now();
+    const input=new ort.Tensor("float32",makeInput(),[1,1,M,T,V,C]);
+    const output=await session.run({keypoint:input});
+    const probs=softmax(Array.from(output.logits.data));
+    let id=0; for(let i=1;i<probs.length;i++) if(probs[i]>probs[id]) id=i;
+    const people=frames[T-1].people;
+    const selected=people.filter(Boolean);
+    const boxes=selected.map(p=>p.box).filter(Boolean);
+    const pairBox=boxes.length ? [
+      Math.min(...boxes.map(b=>b[0])),Math.min(...boxes.map(b=>b[1])),
+      Math.max(...boxes.map(b=>b[2])),Math.max(...boxes.map(b=>b[3]))
+    ] : null;
+    self.postMessage({type:"action",action:{
+      classId:id,label:labels[id]||("class_"+id),confidence:probs[id],
+      trackIds:selected.map(p=>p.trackId).filter(x=>x!=null),pairBox,
+      inferenceMs:performance.now()-start,provider
+    }});
+  } catch(e) {
+    self.postMessage({type:"inference-error",message:e.message});
+  } finally { busy=false; }
+}
+
+self.onmessage=async ({data:m})=>{
+  if(m.type==="init"){try{await init()}catch(e){self.postMessage({type:"error",message:e.message})}return}
+  if(m.type==="reset"){frames=[];count=0;return}
+  if(m.type==="pose-frame" && session){
+    frames.push({people:choosePeople(m.detections),width:m.sourceWidth,height:m.sourceHeight});
+    if(frames.length>T) frames.shift();
+    count++;
+    if(frames.length===T && count%STRIDE===0) await infer();
+  }
+};

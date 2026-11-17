@@ -28,6 +28,7 @@ export class PoseRenderer {
     this.smoothing = options.smoothing ?? 0.35;
     this.lastSource = { width: 0, height: 0 };
     this.latestDetections = [];
+    this.latestAction = null;
     this.sourceWidth = 0;
     this.sourceHeight = 0;
     this.running = true;
@@ -97,10 +98,11 @@ export class PoseRenderer {
     return result;
   }
 
-  draw(detections = [], sourceWidth, sourceHeight) {
+  draw(detections = [], sourceWidth, sourceHeight, action = null) {
     this.latestDetections = Array.isArray(detections) ? detections : [];
     this.sourceWidth = sourceWidth || 0;
     this.sourceHeight = sourceHeight || 0;
+    this.latestAction = action;
     this.scheduleRender();
   }
 
@@ -199,10 +201,37 @@ export class PoseRenderer {
       });
     });
 
+    this.drawActionBox(ctx, detections, scale, dpr);
     ctx.restore();
     for (const trackId of this.smoothed.keys()) {
       if (!activeTrackIds.has(trackId)) this.smoothed.delete(trackId);
     }
+  }
+
+  drawActionBox(ctx, detections, scale, dpr) {
+    const action = this.latestAction;
+    if (!action) return;
+    const ids = new Set(action.trackIds || []);
+    const boxes = detections
+      .filter(d => ids.has(d.trackId ?? d.id))
+      .map(d => d.box)
+      .filter(Boolean);
+    if (!boxes.length && action.pairBox) boxes.push(action.pairBox);
+    if (!boxes.length) return;
+    const x1 = Math.min(...boxes.map(b => Number(b[0])));
+    const y1 = Math.min(...boxes.map(b => Number(b[1])));
+    const x2 = Math.max(...boxes.map(b => Number(b[2])));
+    const y2 = Math.max(...boxes.map(b => Number(b[3])));
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return;
+    const color = "#f2c66d";
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3.2 * dpr / scale;
+    ctx.setLineDash([10 * dpr / scale, 6 * dpr / scale]);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
+    this.drawLabel(`${action.label} ${(action.confidence * 100).toFixed(1)}%`, x1, y1, color, scale, dpr);
+    ctx.restore();
   }
 
   drawLabel(text, x, y, color, scale, dpr) {
