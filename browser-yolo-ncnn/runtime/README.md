@@ -1,9 +1,10 @@
 # NCNN WebAssembly runtime
 
-This folder is reserved for the official Tencent NCNN **WebAssembly SIMD** runtime build and its JavaScript loader/glue files.
+The deployment workflow builds two NCNN browser runtimes:
 
-The official NCNN release archive provides WebAssembly builds with SIMD variants. Use the SIMD-only build for this GitHub Pages project; do not include the threads build.
+- SIMD + threads for cross-origin-isolated browsers with SharedArrayBuffer.
+- Single-thread SIMD fallback for browsers without thread isolation.
 
-Runtime files are intentionally not fabricated or replaced with an unrelated inference engine. The exact official archive layout and exported module interface must be inspected before wiring the browser bridge.
+These Emscripten builds use NCNN CPU execution. Vulkan is disabled in the WebAssembly build because the browser path does not expose NCNN's native Vulkan compute interface. The action-classification model uses a separate ONNX Runtime WebGPU execution provider when the browser supports WebGPU, with WASM CPU fallback.
 
-Source: https://github.com/Tencent/ncnn/releases
+Generated runtime files are placed here during deployment and are not committed to the source tree.

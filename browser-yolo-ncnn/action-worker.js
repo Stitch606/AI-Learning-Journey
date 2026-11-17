@@ -1,4 +1,4 @@
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.mjs";
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.mjs";
 
 const MODEL_URL = new URL("./model/stgcnpp_ntu60.onnx", import.meta.url).href;
 const LABELS_URL = new URL("./model/ntu60_labels.txt", import.meta.url).href;

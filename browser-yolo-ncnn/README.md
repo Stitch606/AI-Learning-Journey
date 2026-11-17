@@ -1,65 +1,22 @@
-# Browser YOLO Pose — NCNN + WebAssembly SIMD
+# Browser YOLO26 Pose + ST-GCN++ Action Recognition
 
-A browser-only YOLO pose demo. Inference is intended to run on the visitor's device; GitHub Pages is static hosting only.
+A browser-local vision pipeline hosted as static files on GitHub Pages. Camera frames remain on the visitor's device.
 
-## Fixed project choices
+## Models
 
-- Model: official Ultralytics **YOLO26n-pose** (Nano pose)
-- Inference engine: **Tencent NCNN**
-- Browser runtime: **WebAssembly SIMD + multi-threading** when cross-origin isolation is available, with a single-thread SIMD fallback
-- Model precision: **FP16** (quantize=16)
-- Initial input size: **416 × 416** as a mobile-oriented starting point; benchmark against 640 before deciding the final default.
-- No inference server and no ONNX Runtime.
+- **YOLO26n-Pose**: exported to NCNN FP16 at 416x416. The browser runs the NCNN build as WebAssembly SIMD, using multiple CPU threads when cross-origin isolation is available and a single-thread fallback otherwise.
+- **ST-GCN++**: the original two-person NTU60 XSub HRNet Joint-Motion architecture and checkpoint are preserved. The model is exported to ONNX without changing its weights or two-person input contract. ONNX Runtime Web uses WebGPU when available and falls back to WebAssembly CPU.
 
-## Project layout
+## ST-GCN++ input and output
 
-- index.html, styles.css, app.js: browser UI, camera/image input, and streaming inference hand-off.
-- renderer.js: real-time COCO-17 skeleton, per-person boxes/labels, confidence filtering, high-DPI scaling, and optional track-ID smoothing.
-- tools/export_model.py: exports the official Nano pose model to NCNN FP16.
-- model/: exported NCNN .param and .bin files will be placed here.
-- inference-worker.js: off-main-thread model loading, frame preprocessing, inference and coordinate restoration.
-- runtime/: generated NCNN WebAssembly SIMD module and `.wasm` binary (created by Actions).
-- wasm/pose_bridge.cpp: NCNN C++ inference bridge and post-processing.
-- wasm/inspect_model.py: discovers the actual NCNN input/output blob names.
+The action classifier receives `[1,1,2,100,17,3]`: one clip, two people, 100 frames, 17 COCO joints, and x/y/joint-motion confidence channels. It returns one of the original 60 NTU60 scene-level classes. The UI draws a group rectangle around the two selected people; it does not claim to identify which person performed the action.
 
-## Current status
+The source architecture is `stgcn/model.py`, and the original checkpoint is copied to `model/stgcnpp_ntu60_xsub_hrnet.pth`. The deployment workflow exports `model/stgcnpp_ntu60.onnx` and runs the browser smoke test.
 
-The browser app now has a real inference pipeline: GitHub Actions exports YOLO26n-Pose to NCNN FP16, builds SIMD and SIMD+threads WebAssembly runtimes, compiles the C++ bridge, and publishes the generated model/runtime with GitHub Pages. The browser loads the model locally in a Web Worker, preprocesses camera/image frames with letterboxing, runs NCNN, decodes person boxes and 17 COCO keypoints, applies confidence filtering and NMS, and sends per-person detections to the streaming canvas renderer. Runtime and model binaries are generated during deployment and are not committed to the source tree.
+## Browser acceleration
 
-## Export the model
+Browsers do not expose raw Vulkan or OpenGL compute APIs to web applications. NCNN's browser WebAssembly build therefore uses CPU SIMD/threads. GPU inference in the browser uses WebGPU through ONNX Runtime Web; WebGPU is the browser API that can map to native Vulkan, Metal, or Direct3D backends depending on the device and browser.
 
-The deployment workflow performs the export automatically. It uses the official `yolo26n-pose.pt` weights and exports NCNN at 416 × 416 with FP16 precision (`quantize=16`). It also inspects the generated NCNN graph to discover its input and output blob names. NCNN export disables the YOLO26 end-to-end branch for this format, so the C++ bridge handles the raw one-to-many pose tensor and performs confidence filtering and NMS itself.
+## Privacy and deployment
 
-Official references:
-- https://docs.ultralytics.com/tasks/pose/
-- https://docs.ultralytics.com/integrations/ncnn/
-- https://github.com/Tencent/ncnn/releases
-- https://github.com/Tencent/ncnn/wiki/how-to-build#build-for-webassembly
-
-## Deployment
-
-Publish this directory as a GitHub Pages site (or configure Pages to use this folder). The browser downloads the static runtime and model files, then runs inference locally. No video or image is uploaded to a server by this project.
-
-## Streaming renderer contract
-
-The browser worker publishes each completed frame to the renderer as:
-
-```js
-window.publishPoseDetections({
-  sourceWidth: 416,
-  sourceHeight: 416,
-  detections: [{
-    trackId: 0,
-    label: "Person",
-    score: 0.94,
-    box: [x1, y1, x2, y2],
-    keypoints: [[x, y, confidence], ...17 COCO points]
-  }]
-});
-```
-
-All coordinates must use the same source-image coordinate system. The renderer draws each person independently and does not average detections. Stable `trackId` values enable temporal smoothing; without them, points are drawn directly to avoid mixing identities when detection order changes.
-
-## Build and deployment
-
-The Pages workflow builds two NCNN variants from Tencent's source: SIMD + threads (`NCNN_THREADS=ON`, `NCNN_OPENMP=ON`, `NCNN_SIMPLEOMP=ON`) and a single-thread SIMD fallback. A same-origin service worker supplies COOP/COEP response headers so compatible browsers can use `SharedArrayBuffer`; the worker selects up to 8 CPU threads when isolation is active, otherwise it selects the fallback. Both builds keep the same YOLO26n-Pose FP16 model at 416 × 416. GitHub Pages remains static hosting only. The runtime and FP16 model are generated into the Pages artifact during the workflow. Camera frames are transferred to a dedicated Web Worker; if inference is still running, the next frame is skipped rather than queued, prioritizing low latency.
+GitHub Pages serves static assets only. Model inference runs locally in dedicated workers. No camera frame or selected image is uploaded for inference.
