@@ -41,7 +41,10 @@ def seed_everything(seed: int) -> None:
 
 
 def locate_dir(root: Path, name: str) -> Path:
-    candidates = [p for p in root.rglob(name) if p.is_dir()]
+    candidates = [
+        p for p in root.rglob(name)
+        if p.is_dir() and "__MACOSX" not in p.parts
+    ]
     if not candidates:
         raise FileNotFoundError(f"Could not find directory {name!r} under {root}")
     return candidates[0]
