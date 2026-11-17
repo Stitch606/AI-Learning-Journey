@@ -26,10 +26,10 @@ CLIP_LEN = 100
 WINDOW_STRIDE = 50
 MAX_PERSONS = 10
 MAX_PER_VIDEO_PER_CLASS = 8
-MAX_TRAIN_PER_CLASS = 800
-MAX_TEST_PER_CLASS = 300
+MAX_TRAIN_PER_CLASS = 500
+MAX_TEST_PER_CLASS = 200
 BATCH_SIZE = 4
-EPOCHS = 4
+EPOCHS = 3
 SEED = 255
 
 
@@ -99,14 +99,19 @@ def parse_person_pose(payload) -> np.ndarray | None:
 def frame_to_label_index(frame_number: int, minimum_frame: int,
                          maximum_frame: int, label_count: int,
                          sequential_index: int) -> int:
-    if minimum_frame == 0 and 0 <= frame_number < label_count:
-        return frame_number
-    if minimum_frame >= 1 and 0 <= frame_number - minimum_frame < label_count:
-        return frame_number - minimum_frame
-    if 0 <= frame_number < label_count:
-        return frame_number
-    if 0 <= frame_number - 1 < label_count:
-        return frame_number - 1
+    if minimum_frame == 0:
+        offset = 0
+    elif minimum_frame == 1:
+        offset = 1
+    elif maximum_frame == label_count:
+        offset = 1
+    elif maximum_frame == label_count + 1:
+        offset = 2
+    else:
+        offset = 0
+    index = frame_number - offset
+    if 0 <= index < label_count:
+        return index
     return sequential_index
 
 
