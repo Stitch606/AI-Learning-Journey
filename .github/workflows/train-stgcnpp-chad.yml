@@ -1,0 +1,61 @@
+name: Train ST-GCN++ on CHAD precomputed person skeletons
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "GCN/STGCNPP/train_chad_weak_person.py"
+      - ".github/workflows/train-stgcnpp-chad.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chad-person-pose:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU training dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy==1.26.4 gdown==5.2.0
+
+      - name: Download CHAD metadata only, without videos
+        run: |
+          set -euo pipefail
+          mkdir -p data/CHAD_Meta
+          gdown --fuzzy "https://drive.google.com/file/d/1g01Ay86cuPmKGsrfxddxwA1uG_7bFFmu/view?usp=sharing" \
+            -O data/CHAD_Meta.zip
+          test "$(stat -c%s data/CHAD_Meta.zip)" -gt 100000000
+          unzip -q data/CHAD_Meta.zip -d data/CHAD_Meta
+          echo "Pose files: $(find data/CHAD_Meta -path '*/annotations/*.pkl' | wc -l)"
+          echo "Frame-label files: $(find data/CHAD_Meta -path '*/anomaly_labels/*.npy' | wc -l)"
+          echo "Archive size: $(du -h data/CHAD_Meta.zip | cut -f1)"
+
+      - name: Train weakly supervised per-person ST-GCN++ anomaly detector
+        run: |
+          set -euo pipefail
+          python GCN/STGCNPP/train_chad_weak_person.py
+
+      - name: Upload trained checkpoint and evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stgcnpp-chad-person-anomaly
+          path: |
+            chad_pose_outputs/stgcnpp_chad_weak_person_anomaly_best.pth
+            chad_pose_outputs/chad_weak_person_anomaly_report.json
+          if-no-files-found: warn
+          retention-days: 30
