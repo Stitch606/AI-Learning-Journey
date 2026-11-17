@@ -74,7 +74,8 @@ def normalize_label_ids(annotations: list[dict]) -> None:
         raise ValueError(f"HMDB51 labels outside 0..50: {bad}")
 
 
-def choose_primary_person(annotation: dict) -> tuple[np.ndarray, np.ndarray]:
+def extract_person_tracks(annotation: dict) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return every annotated person's COCO-17 sequence from one clip."""
     keypoint = np.asarray(annotation["keypoint"], dtype=np.float32)
     if keypoint.ndim == 3:
         keypoint = keypoint[None, ...]
@@ -92,23 +93,24 @@ def choose_primary_person(annotation: dict) -> tuple[np.ndarray, np.ndarray]:
         raise ValueError(
             f"keypoint_score shape {score.shape} does not match {keypoint.shape[:-1]}"
         )
-
     if keypoint.shape[0] == 0:
-        raise ValueError("No detected person in skeleton sample")
+        return []
 
-    visible = score > 0.01
-    coverage = visible.sum(axis=(1, 2))
-    mean_conf = np.divide(
-        (score * visible).sum(axis=(1, 2)),
-        np.maximum(coverage, 1),
-    )
-    quality = coverage * mean_conf
-    person_index = int(np.argmax(quality))
-    return keypoint[person_index], np.clip(score[person_index], 0.0, 1.0)
+    tracks = []
+    for person_index in range(keypoint.shape[0]):
+        person_score = np.clip(score[person_index], 0.0, 1.0)
+        visible = person_score > 0.01
+        if int(visible.sum()) < 1:
+            continue
+        tracks.append((keypoint[person_index], person_score))
+    return tracks
 
 
-def make_joint_motion(annotation: dict, training: bool) -> np.ndarray:
-    keypoint, score = choose_primary_person(annotation)
+def make_joint_motion(annotation: dict, person_index: int, training: bool) -> np.ndarray:
+    tracks = extract_person_tracks(annotation)
+    if person_index >= len(tracks):
+        raise IndexError(f"Person track {person_index} is unavailable")
+    keypoint, score = tracks[person_index]
     frames = keypoint.shape[0]
     if frames < 1:
         raise ValueError("Empty temporal sequence")
@@ -144,24 +146,39 @@ def make_joint_motion(annotation: dict, training: bool) -> np.ndarray:
 
     return motion[indices]
 
-
 class HMDBPersonDataset(Dataset):
     def __init__(self, annotations: list[dict], class_to_index: dict[str, int],
                  training: bool):
-        self.annotations = annotations
         self.class_to_index = class_to_index
         self.training = training
+        self.samples = []
+        self.clip_count = len(annotations)
+        self.single_person_clips = 0
+        self.multi_person_clips = 0
+        self.person_track_counts = Counter()
+
+        for annotation in annotations:
+            tracks = extract_person_tracks(annotation)
+            if not tracks:
+                continue
+            if len(tracks) == 1:
+                self.single_person_clips += 1
+            else:
+                self.multi_person_clips += 1
+            class_name = HMDB_CLASSES[int(annotation["label"])]
+            self.person_track_counts[class_name] += len(tracks)
+            for person_index in range(len(tracks)):
+                self.samples.append((annotation, person_index))
 
     def __len__(self) -> int:
-        return len(self.annotations)
+        return len(self.samples)
 
     def __getitem__(self, index: int):
-        item = self.annotations[index]
-        motion = make_joint_motion(item, self.training)
+        item, person_index = self.samples[index]
+        motion = make_joint_motion(item, person_index, self.training)
         class_name = HMDB_CLASSES[int(item["label"])]
         label = self.class_to_index[class_name]
         return torch.from_numpy(motion), torch.tensor(label, dtype=torch.long)
-
 
 def collate(items):
     motion = torch.stack([x[0] for x in items], dim=0)
@@ -256,9 +273,8 @@ def main():
         if a["frame_dir"] in test_ids and int(a["label"]) in target_ids
     ]
 
-    train_rows = cap_per_class(train_rows, TARGET_CLASSES, MAX_TRAIN_PER_CLASS, SEED)
-    test_rows = cap_per_class(test_rows, TARGET_CLASSES, MAX_TEST_PER_CLASS, SEED + 1)
-
+    # Use every official train/test annotation for the selected classes.
+    # Each annotated person track becomes an independent training example.
     train_counts = Counter(HMDB_CLASSES[int(a["label"])] for a in train_rows)
     test_counts = Counter(HMDB_CLASSES[int(a["label"])] for a in test_rows)
     missing = [
@@ -274,6 +290,24 @@ def main():
     class_to_index = {name: i for i, name in enumerate(TARGET_CLASSES)}
     train_dataset = HMDBPersonDataset(train_rows, class_to_index, training=True)
     test_dataset = HMDBPersonDataset(test_rows, class_to_index, training=False)
+    print(
+        "PERSON_TRACKS="
+        + json.dumps({
+            "train": {
+                "total": len(train_dataset),
+                "single_person_clips": train_dataset.single_person_clips,
+                "multi_person_clips": train_dataset.multi_person_clips,
+                "by_class": dict(train_dataset.person_track_counts),
+            },
+            "test": {
+                "total": len(test_dataset),
+                "single_person_clips": test_dataset.single_person_clips,
+                "multi_person_clips": test_dataset.multi_person_clips,
+                "by_class": dict(test_dataset.person_track_counts),
+            },
+        }),
+        flush=True,
+    )
     train_loader = DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True,
         num_workers=0, collate_fn=collate, drop_last=False,
@@ -286,7 +320,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(
         f"Device={device}; official splits={train_key}/{test_key}; "
-        f"train={len(train_rows)}; test={len(test_rows)}; "
+        f"train_clips={len(train_rows)}; test_clips={len(test_rows)}; "
         f"classes={len(TARGET_CLASSES)}",
         flush=True,
     )
@@ -399,8 +433,16 @@ def main():
         ),
         "official_train_split": train_key,
         "official_test_split": test_key,
-        "train_samples": len(train_rows),
-        "test_samples": len(test_rows),
+        "train_clips": len(train_rows),
+        "test_clips": len(test_rows),
+        "train_person_tracks": len(train_dataset),
+        "test_person_tracks": len(test_dataset),
+        "train_single_person_clips": train_dataset.single_person_clips,
+        "train_multi_person_clips": train_dataset.multi_person_clips,
+        "test_single_person_clips": test_dataset.single_person_clips,
+        "test_multi_person_clips": test_dataset.multi_person_clips,
+        "train_person_tracks_by_class": dict(train_dataset.person_track_counts),
+        "test_person_tracks_by_class": dict(test_dataset.person_track_counts),
         "target_classes": TARGET_CLASSES,
         "train_class_counts": dict(train_counts),
         "test_class_counts": dict(test_counts),
@@ -409,10 +451,11 @@ def main():
         "training_history": history,
         "supervision_note": (
             "HMDB51 provides clip-level labels, not independent ground-truth labels "
-            "for every detected person. For each clip, the primary skeleton track was "
-            "selected by visible-keypoint coverage and confidence, then trained with "
-            "the clip label. This is actor-focused pose transfer, not dense multi-person "
-            "individual-action ground truth."
+            "for every detected person. Every available person skeleton track in each "
+            "selected clip was included as an independent training example and inherited "
+            "that clip's action label. Both single-person and multi-person clips are "
+            "included. In multi-person clips this is clip-label supervision for each "
+            "track, not verified per-person ground truth."
         ),
         "input_note": (
             "Precomputed HRNet COCO-17 2D keypoints and scores; Joint Motion was "
