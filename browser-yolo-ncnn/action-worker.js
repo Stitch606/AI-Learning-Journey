@@ -4,13 +4,51 @@ const MODEL_URL = new URL("./model/stgcnpp_ntu60.onnx", import.meta.url).href;
 const LABELS_URL = new URL("./model/ntu60_labels.txt", import.meta.url).href;
 const T = 100, V = 17, M = 2, C = 3, STRIDE = 5;
 let session = null, labels = [], frames = [], count = 0, busy = false, provider = "WASM CPU";
+let slotTrackIds = [null, null];
+let slotMisses = [0, 0];
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 function choosePeople(detections) {
-  return (detections || []).filter(d => Array.isArray(d.keypoints) && d.keypoints.length === V)
-    .sort((a,b) => (b.score || 0) - (a.score || 0)).slice(0,M)
-    .sort((a,b) => ((a.box?.[0] || 0) + (a.box?.[2] || 0)) - ((b.box?.[0] || 0) + (b.box?.[2] || 0)));
+  const valid = (detections || [])
+    .filter(d => d.trackId != null && Array.isArray(d.keypoints) && d.keypoints.length === V)
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  const assigned = [null, null];
+  let changed = false;
+
+  for (let slot = 0; slot < M; slot++) {
+    const id = slotTrackIds[slot];
+    if (id == null) continue;
+    const match = valid.find(d => d.trackId === id);
+    if (match) {
+      assigned[slot] = match;
+      slotMisses[slot] = 0;
+    } else {
+      slotMisses[slot]++;
+      if (slotMisses[slot] > 12) {
+        slotTrackIds[slot] = null;
+        slotMisses[slot] = 0;
+        changed = true;
+      }
+    }
+  }
+
+  for (let slot = 0; slot < M; slot++) {
+    if (slotTrackIds[slot] != null) continue;
+    const candidate = valid.find(d => !slotTrackIds.includes(d.trackId));
+    if (candidate) {
+      slotTrackIds[slot] = candidate.trackId;
+      assigned[slot] = candidate;
+      slotMisses[slot] = 0;
+      changed = true;
+    }
+  }
+
+  if (changed && frames.length) {
+    frames = [];
+    count = 0;
+  }
+  return assigned;
 }
 
 function makeInput() {
@@ -65,9 +103,18 @@ async function infer() {
   if(busy || !session || frames.length<T) return;
   busy=true;
   try {
+    if (frames.filter(f => f.people.some(Boolean)).length < 70) return;
     const start=performance.now();
     const input=new ort.Tensor("float32",makeInput(),[1,1,M,T,V,C]);
-    const output=await session.run({keypoint:input});
+    let output;
+    try {
+      output=await session.run({keypoint:input});
+    } catch (gpuError) {
+      if (!provider.startsWith("WebGPU")) throw gpuError;
+      session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+      provider="WASM CPU fallback";
+      output=await session.run({keypoint:input});
+    }
     const probs=softmax(Array.from(output.logits.data));
     let id=0; for(let i=1;i<probs.length;i++) if(probs[i]>probs[id]) id=i;
     const people=frames[T-1].people;
@@ -89,7 +136,7 @@ async function infer() {
 
 self.onmessage=async ({data:m})=>{
   if(m.type==="init"){try{await init()}catch(e){self.postMessage({type:"error",message:e.message})}return}
-  if(m.type==="reset"){frames=[];count=0;return}
+  if(m.type==="reset"){frames=[];count=0;slotTrackIds=[null,null];slotMisses=[0,0];return}
   if(m.type==="pose-frame" && session){
     frames.push({people:choosePeople(m.detections),width:m.sourceWidth,height:m.sourceHeight});
     if(frames.length>T) frames.shift();
