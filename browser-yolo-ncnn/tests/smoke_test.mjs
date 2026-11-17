@@ -206,6 +206,7 @@ try {
       const readyPromise = waitFor("ready", 90000);
       worker.postMessage({ type: "init" });
       const ready = await readyPromise;
+      const actionPromise = waitFor("action", 90000);
       for (let frame = 0; frame < 105; frame++) {
         const makePerson = (trackId, baseX) => ({
           trackId, score: 0.95,
@@ -223,7 +224,7 @@ try {
           detections: [makePerson(1, 25), makePerson(2, 190)]
         });
       }
-      const result = await waitFor("action", 90000);
+      const result = await actionPromise;
       const action = result.action;
       if (!Number.isInteger(action.classId) || action.classId < 0 || action.classId >= 60)
         throw new Error("ST-GCN++ returned an invalid class ID.");
