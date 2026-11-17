@@ -185,6 +185,67 @@ try {
     }
   });
 
+  const actionInference = await page.evaluate(async () => {
+    const worker = new Worker("./action-worker.js", { type: "module" });
+    const waitFor = (type, timeout = 90000) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for " + type)), timeout);
+      const listener = event => {
+        if (event.data?.type === "error" || event.data?.type === "inference-error") {
+          clearTimeout(timer);
+          worker.removeEventListener("message", listener);
+          reject(new Error(event.data.message || "Action worker failed."));
+        } else if (event.data?.type === type) {
+          clearTimeout(timer);
+          worker.removeEventListener("message", listener);
+          resolve(event.data);
+        }
+      };
+      worker.addEventListener("message", listener);
+    });
+    try {
+      const readyPromise = waitFor("ready", 90000);
+      worker.postMessage({ type: "init" });
+      const ready = await readyPromise;
+      for (let frame = 0; frame < 105; frame++) {
+        const makePerson = (trackId, baseX) => ({
+          trackId, score: 0.95,
+          box: [baseX, 30, baseX + 90, 300],
+          keypoints: Array.from({ length: 17 }, (_, joint) => [
+            baseX + 12 + joint * 2 + Math.sin(frame / 5 + joint) * 8,
+            45 + joint * 9 + Math.cos(frame / 6 + joint) * 7,
+            0.9
+          ])
+        });
+        worker.postMessage({
+          type: "pose-frame",
+          sourceWidth: 320,
+          sourceHeight: 480,
+          detections: [makePerson(1, 25), makePerson(2, 190)]
+        });
+      }
+      const result = await waitFor("action", 90000);
+      const action = result.action;
+      if (!Number.isInteger(action.classId) || action.classId < 0 || action.classId >= 60)
+        throw new Error("ST-GCN++ returned an invalid class ID.");
+      if (!Number.isFinite(action.confidence) || action.confidence < 0 || action.confidence > 1)
+        throw new Error("ST-GCN++ returned an invalid confidence.");
+      if (!Number.isFinite(action.inferenceMs) || action.inferenceMs <= 0)
+        throw new Error("ST-GCN++ returned an invalid inference time.");
+      return {
+        provider: ready.provider,
+        classes: ready.classes,
+        inputShape: ready.inputShape,
+        classId: action.classId,
+        label: action.label,
+        confidence: action.confidence,
+        inferenceMs: Number(action.inferenceMs.toFixed(2)),
+        pairBox: action.pairBox
+      };
+    } finally {
+      worker.terminate();
+    }
+  });
+
   const rendererCheck = await page.evaluate(async () => {
     const { PoseRenderer } = await import("./renderer.js");
     const canvas = document.querySelector("#overlay");
@@ -209,6 +270,7 @@ try {
 
   if (pageErrors.length) throw new Error("Browser page errors: " + pageErrors.join(" | "));
   console.log(`INFERENCE_BENCHMARK ${JSON.stringify(benchmark)}`);
+  console.log(`STGCN_ACTION_INFERENCE ${JSON.stringify(actionInference)}`);
   console.log(`RENDERER_OK ${JSON.stringify(rendererCheck)}`);
   console.log("BROWSER_MODEL_TEST_PASSED");
 } finally {

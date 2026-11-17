@@ -44,7 +44,10 @@ canvas { pointer-events: none; }
 button, .secondary { min-height: 43px; padding: 0 17px; border-radius: 11px; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .primary { border: 0; color: #100b1b; background: linear-gradient(100deg, var(--cyan), #b18aff); }
 .secondary { border: 1px solid var(--line); color: var(--text); background: #1b1a28; }
-.info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; }
+.action-readout { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 16px; }
+.action-readout strong { color: #f2c66d; font-size: 14px; line-height: 1.4; }
+.action-readout small { color: var(--muted); font-size: 11px; }
+.info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
 .info-card { padding: 15px; display: flex; flex-direction: column; gap: 6px; }
 .info-label { color: var(--muted); font-size: 9px; letter-spacing: .16em; font-weight: 800; }
 .info-card strong { font-size: 14px; }
