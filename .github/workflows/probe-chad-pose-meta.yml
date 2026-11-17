@@ -1,4 +1,4 @@
-name: Verify CHAD precomputed pose metadata archive
+name: Verify CHAD precomputed pose metadata archive (metadata-only)
 
 on:
   push:
