@@ -1,0 +1,47 @@
+name: Verify CHAD precomputed pose metadata archive
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/probe-chad-pose-meta.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-chad-pose:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Google Drive downloader
+        run: pip install gdown==5.2.0
+
+      - name: Download annotations, skeletons and anomaly labels only
+        run: |
+          set -euo pipefail
+          mkdir -p chad_meta
+          gdown --fuzzy "https://drive.google.com/file/d/1g01Ay86cuPmKGsrfxddxwA1uG_7bFFmu/view?usp=sharing" -O chad_meta/CHAD_Meta.zip \
+            || gdown --fuzzy "https://drive.google.com/file/d/1K3g_6irFJrhj93LFcOEN3TUCptB1KCQq/view?usp=sharing" -O chad_meta/CHAD_Meta.zip
+          test "$(stat -c%s chad_meta/CHAD_Meta.zip)" -gt 1000000
+          ls -lh chad_meta/CHAD_Meta.zip
+          unzip -Z1 chad_meta/CHAD_Meta.zip > chad_meta/archive_contents.txt
+          echo "FILES=$(wc -l < chad_meta/archive_contents.txt)"
+          grep -E '\.(pkl|npy)$' chad_meta/archive_contents.txt | head -40 || true
+          echo "ARCHIVE_BYTES=$(stat -c%s chad_meta/CHAD_Meta.zip)" > chad_meta/summary.txt
+          echo "ARCHIVE_FILES=$(wc -l < chad_meta/archive_contents.txt)" >> chad_meta/summary.txt
+
+      - name: Upload archive manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chad-pose-metadata-manifest
+          path: chad_meta/
+          retention-days: 7
