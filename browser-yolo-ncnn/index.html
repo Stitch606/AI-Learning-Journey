@@ -23,6 +23,18 @@
       <p class="subcopy">Original two-person NTU60 model · Local device inference</p>
     </section>
     <section class="viewer-card" aria-label="Camera preview">
+      <div class="scene-banner" aria-live="polite">
+        <div class="scene-banner-mark"><span></span></div>
+        <div class="scene-banner-copy">
+          <span class="scene-kicker">LIVE SCENE ANALYSIS</span>
+          <strong id="action-result">Waiting for 100 frames</strong>
+          <small id="action-status">Preparing action model</small>
+        </div>
+        <div class="scene-confidence">
+          <span>CONFIDENCE</span>
+          <strong id="action-confidence">--</strong>
+        </div>
+      </div>
       <div class="viewer-head">
         <span>LIVE VIEW</span>
         <span id="runtime-status" class="status"><i></i><span>Preparing runtime</span></span>
@@ -40,11 +52,6 @@
         <button id="camera-button" class="primary">Start camera</button>
         <label class="secondary" for="image-input">Choose image</label>
         <input id="image-input" type="file" accept="image/*" hidden>
-      </div>
-      <div class="action-readout">
-        <span class="info-label">SCENE ACTION</span>
-        <strong id="action-result">Waiting for 100 frames</strong>
-        <small id="action-status">Loading ST-GCN++ · WebGPU / WASM</small>
       </div>
     </section>
     <section class="info-grid">
