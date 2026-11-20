@@ -18,6 +18,7 @@ const renderer = new PoseRenderer(canvas, {
 
 const actionStatus = document.querySelector("#action-status");
 const actionResult = document.querySelector("#action-result");
+const actionConfidence = document.querySelector("#action-confidence");
 const actionWorker = new Worker("./action-worker.js?v=1", { type: "module" });
 let latestDetections = [];
 let latestAction = null;
@@ -33,7 +34,9 @@ actionWorker.addEventListener("message", event => {
   }
   if (message.type === "action") {
     latestAction = message.action;
-    actionResult.textContent = `${message.action.label} · ${(message.action.confidence * 100).toFixed(1)}% · ${message.action.inferenceMs.toFixed(1)} ms`;
+    actionResult.textContent = message.action.label;
+    actionConfidence.textContent = `${(message.action.confidence * 100).toFixed(1)}%`;
+    actionStatus.textContent = `${(message.action.trackIds || []).length} people in the analyzed pair · ${message.action.inferenceMs.toFixed(1)} ms`;
     renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
   }
   if (message.type === "error" || message.type === "inference-error") {
@@ -287,6 +290,7 @@ async function startCamera() {
     latestAction = null;
     latestDetections = [];
     actionResult.textContent = "Waiting for 100 frames";
+    actionConfidence.textContent = "--";
     actionWorker.postMessage({ type: "reset" });
     renderer.clear();
 
