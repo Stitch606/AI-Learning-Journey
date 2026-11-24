@@ -117,6 +117,7 @@ let animationFrame = 0;
 let lastSubmittedAt = 0;
 let pendingBitmap = null;
 let selectedVideoUrl = null;
+let selectedVideoStarted = false;
 let worker = null;
 let workerInitTimer = 0;
 let workerStage = "Starting NCNN";
@@ -386,6 +387,7 @@ videoInput.addEventListener("change", async () => {
 
   if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
   selectedVideoUrl = URL.createObjectURL(file);
+  selectedVideoStarted = false;
   downloadVideo.href = selectedVideoUrl;
   downloadVideo.download = file.name || "analysis-video";
   downloadVideo.hidden = false;
@@ -405,7 +407,7 @@ videoInput.addEventListener("change", async () => {
     notice.textContent = "Video analysis finished.";
   };
   video.onplay = () => {
-    if (!cameraRunning && video.src && !cameraStream) {
+    if (selectedVideoStarted && !cameraRunning && video.src && !cameraStream) {
       cameraRunning = true;
       lastSubmittedAt = 0;
       animationFrame = requestAnimationFrame(captureCameraFrame);
@@ -424,6 +426,7 @@ videoInput.addEventListener("change", async () => {
   videoInput.value = "";
   try {
     await video.play();
+    selectedVideoStarted = true;
     cameraRunning = true;
     lastSubmittedAt = 0;
     notice.textContent = "Analyzing the selected video locally. Use the video controls to pause or seek.";
