@@ -4,7 +4,7 @@ const video = document.querySelector("#camera");
 const canvas = document.querySelector("#overlay");
 const emptyState = document.querySelector("#empty-state");
 const cameraButton = document.querySelector("#camera-button");
-const imageInput = document.querySelector("#image-input");
+const videoInput = document.querySelector("#video-input");
 const statusText = document.querySelector("#runtime-status span");
 const statusDot = document.querySelector("#runtime-status i");
 const notice = document.querySelector("#notice");
@@ -81,14 +81,14 @@ let inferenceBusy = false;
 let animationFrame = 0;
 let lastSubmittedAt = 0;
 let pendingBitmap = null;
-let selectedImageUrl = null;
+let selectedVideoUrl = null;
 let worker = null;
 let workerInitTimer = 0;
 let workerStage = "Starting NCNN";
 let usingSingleThreadFallback = false;
 
 cameraButton.disabled = false;
-imageInput.disabled = true;
+videoInput.disabled = true;
 
 function launchWorker(forceSingleThread = false) {
   clearTimeout(workerInitTimer);
@@ -112,11 +112,11 @@ function launchWorker(forceSingleThread = false) {
       clearTimeout(workerInitTimer);
       workerReady = true;
       cameraButton.disabled = cameraRunning;
-      imageInput.disabled = false;
+      videoInput.disabled = false;
       setStatus(message.runtimeMode === "simd-threads"
         ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
         : "NCNN · SIMD · single thread · model ready", true);
-      notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose an image.";
+      notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose a video.";
       return;
     }
 
@@ -153,7 +153,7 @@ function launchWorker(forceSingleThread = false) {
       inferenceBusy = false;
       setStatus("Model loading failed");
       notice.textContent = "NCNN could not start: " + message.message;
-      imageInput.disabled = true;
+      videoInput.disabled = true;
       processPendingFrame();
     }
   });
@@ -164,7 +164,7 @@ function launchWorker(forceSingleThread = false) {
       return;
     }
     clearTimeout(workerInitTimer);
-    imageInput.disabled = true;
+    videoInput.disabled = true;
     inferenceBusy = false;
     setStatus("Runtime error");
     notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
@@ -185,7 +185,7 @@ function armWorkerTimeout() {
     }
     setStatus("Model loading timed out");
     notice.textContent = workerStage + " is taking longer than 250 seconds. Check the connection, reload the page, and try again.";
-    imageInput.disabled = true;
+    videoInput.disabled = true;
     worker?.terminate();
   }, 250000);
 }
@@ -194,7 +194,7 @@ function retrySingleThread(reason) {
   if (usingSingleThreadFallback) return;
   usingSingleThreadFallback = true;
   clearTimeout(workerInitTimer);
-  imageInput.disabled = true;
+  videoInput.disabled = true;
   setStatus("Retrying with single-thread NCNN");
   notice.textContent = reason + " Switching to the compatible single-thread runtime…";
   launchWorker(true);
@@ -284,9 +284,12 @@ async function startCamera() {
 
   try {
     stopCamera();
-    document.querySelector("#image-preview")?.remove();
-    if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
-    selectedImageUrl = null;
+    video.pause();
+    video.removeAttribute("src");
+    video.controls = false;
+    video.load();
+    if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
+    selectedVideoUrl = null;
     latestAction = null;
     latestDetections = [];
     actionResult.textContent = "Waiting for 100 frames";
@@ -304,6 +307,9 @@ async function startCamera() {
       }
     });
 
+    video.removeAttribute("src");
+    video.controls = false;
+    video.load();
     video.srcObject = cameraStream;
     video.style.display = "block";
     emptyState.style.display = "none";
@@ -320,48 +326,57 @@ async function startCamera() {
 
 cameraButton.addEventListener("click", startCamera);
 
-imageInput.addEventListener("change", async () => {
-  const file = imageInput.files?.[0];
+videoInput.addEventListener("change", async () => {
+  const file = videoInput.files?.[0];
   if (!file || !workerReady) return;
 
   stopCamera();
   latestAction = null;
   latestDetections = [];
+  latestWidth = 0;
+  latestHeight = 0;
   actionResult.textContent = "Waiting for 100 frames";
+  actionConfidence.textContent = "--";
   actionWorker.postMessage({ type: "reset" });
   renderer.clear();
-  if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
-  selectedImageUrl = URL.createObjectURL(file);
 
-  const image = new Image();
-  image.onload = async () => {
-    video.style.display = "none";
-    emptyState.style.display = "none";
-    const stage = document.querySelector(".stage");
-    let preview = document.querySelector("#image-preview");
-    if (!preview) {
-      preview = document.createElement("img");
-      preview.id = "image-preview";
-      preview.alt = "Selected image";
-      preview.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain";
-      stage.insertBefore(preview, canvas);
-    }
-    preview.src = selectedImageUrl;
+  if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
+  selectedVideoUrl = URL.createObjectURL(file);
+  video.srcObject = null;
+  video.src = selectedVideoUrl;
+  video.controls = true;
+  video.style.display = "block";
+  emptyState.style.display = "none";
+  cameraButton.disabled = true;
+  cameraButton.textContent = "Video is playing";
+
+  video.onended = () => {
+    cameraRunning = false;
+    cancelAnimationFrame(animationFrame);
     cameraButton.disabled = false;
     cameraButton.textContent = "Start camera";
+    notice.textContent = "Video analysis finished.";
+  };
+  video.onerror = () => {
+    cameraRunning = false;
+    cancelAnimationFrame(animationFrame);
+    cameraButton.disabled = false;
+    cameraButton.textContent = "Start camera";
+    notice.textContent = "This video format could not be played by the browser.";
+  };
 
-    try {
-      const bitmap = await createImageBitmap(file);
-      submitBitmap(bitmap, true);
-      notice.textContent = "Running pose inference on the selected image…";
-    } catch (error) {
-      notice.textContent = "Could not decode the selected image: " + error.message;
-    }
-  };
-  image.onerror = () => {
-    notice.textContent = "The selected image could not be decoded.";
-  };
-  image.src = selectedImageUrl;
+  try {
+    await video.play();
+    cameraRunning = true;
+    lastSubmittedAt = 0;
+    notice.textContent = "Analyzing the selected video locally. Use the video controls to pause or seek.";
+    animationFrame = requestAnimationFrame(captureCameraFrame);
+  } catch (error) {
+    cameraRunning = false;
+    cameraButton.disabled = false;
+    cameraButton.textContent = "Start camera";
+    notice.textContent = "Could not play the selected video: " + error.message;
+  }
 });
 
 window.addEventListener("pagehide", () => {
@@ -369,7 +384,7 @@ window.addEventListener("pagehide", () => {
   pendingBitmap?.close();
   worker.terminate();
   actionWorker.terminate();
-  if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
+  if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
 });
 
 if (!supportsWasmSimd()) {
