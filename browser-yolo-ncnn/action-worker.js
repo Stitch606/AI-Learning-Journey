@@ -2,8 +2,9 @@ let ort = null;
 
 const MODEL_URL = new URL("./model/stgcnpp_ntu60.onnx", import.meta.url).href;
 const LABELS_URL = new URL("./model/ntu60_labels.txt", import.meta.url).href;
+const ACTION_CACHE_NAME = "stgcnpp-ntu60-onnx-v1";
 const T = 100, V = 17, M = 2, C = 3, STRIDE = 5;
-let session = null, labels = [], frames = [], count = 0, busy = false, provider = "WASM CPU";
+let session = null, modelBytes = null, labels = [], frames = [], count = 0, busy = false, provider = "WASM CPU";
 let slotTrackIds = [null, null];
 let slotMisses = [0, 0];
 
@@ -82,21 +83,69 @@ function softmax(x) {
   return e.map(v=>v/s);
 }
 
+async function loadActionModel() {
+  const request = new Request(MODEL_URL, { method: "GET" });
+  let cache = null;
+  try { cache = "caches" in self ? await caches.open(ACTION_CACHE_NAME) : null; } catch {}
+  const cached = cache ? await cache.match(request).catch(() => null) : null;
+  if (cached) {
+    const bytes = new Uint8Array(await cached.arrayBuffer());
+    if (bytes.length) {
+      self.postMessage({type:"progress",message:"ST-GCN++ weights loaded from device cache ("+(bytes.length/1048576).toFixed(2)+" MB)"});
+      return bytes;
+    }
+  }
+
+  self.postMessage({type:"progress",message:"Downloading ST-GCN++ weights"});
+  const response = await fetch(request, {cache:"default"});
+  if (!response.ok) throw new Error("ST-GCN++ model download failed (HTTP "+response.status+").");
+  let bytes;
+  if (!response.body) {
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } else {
+    const reader = response.body.getReader(), chunks = [];
+    const total = Number(response.headers.get("content-length")) || 0;
+    let loaded = 0;
+    while (true) {
+      const {done,value} = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      const mb = (loaded/1048576).toFixed(2);
+      const pct = total ? " · "+Math.min(100,Math.round(loaded/total*100))+"%" : "";
+      self.postMessage({type:"progress",message:"ST-GCN++ "+mb+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB":"")+pct});
+    }
+    bytes = new Uint8Array(loaded);
+    let offset=0;
+    for (const chunk of chunks) { bytes.set(chunk,offset); offset+=chunk.byteLength; }
+  }
+  if (!bytes.length) throw new Error("ST-GCN++ model downloaded as an empty file.");
+  try {
+    if (cache) await cache.put(request,new Response(bytes,{
+      headers:{"Content-Type":response.headers.get("content-type")||"application/octet-stream"}
+    }));
+  } catch {
+    self.postMessage({type:"progress",message:"Weights loaded; persistent cache unavailable on this browser."});
+  }
+  return bytes;
+}
+
 async function init() {
   self.postMessage({type:"progress",message:"Loading action runtime"});
   const ortModule = await import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.mjs");
   ort = ortModule;
   self.postMessage({type:"progress",message:"Loading original NTU60 ST-GCN++"});
   labels=(await (await fetch(LABELS_URL, {cache:"default"})).text()).trim().split(/\r?\n/);
+  modelBytes = await loadActionModel();
   ort.env.logLevel="error";
   ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
   ort.env.wasm.numThreads=self.crossOriginIsolated ? Math.max(1,Math.min(self.navigator.hardwareConcurrency||2,4)) : 1;
   try {
     if(!self.navigator.gpu) throw new Error("WebGPU unavailable");
-    session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["webgpu","wasm"],graphOptimizationLevel:"all"});
+    session=await ort.InferenceSession.create(modelBytes,{executionProviders:["webgpu","wasm"],graphOptimizationLevel:"all"});
     provider="WebGPU (WASM fallback)";
   } catch(e) {
-    session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+    session=await ort.InferenceSession.create(modelBytes,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
     provider="WASM CPU";
   }
   self.postMessage({type:"ready",provider,classes:labels.length,inputShape:[1,1,2,100,17,3]});
@@ -114,7 +163,7 @@ async function infer() {
       output=await session.run({keypoint:input});
     } catch (gpuError) {
       if (!provider.startsWith("WebGPU")) throw gpuError;
-      session=await ort.InferenceSession.create(MODEL_URL,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
+      session=await ort.InferenceSession.create(modelBytes,{executionProviders:["wasm"],graphOptimizationLevel:"all"});
       provider="WASM CPU fallback";
       output=await session.run({keypoint:input});
     }
