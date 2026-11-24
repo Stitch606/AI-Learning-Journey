@@ -22,7 +22,7 @@
       <h2>Pose estimation.<br><span>On your device.</span></h2>
       <p class="subcopy">Original two-person NTU60 model · Local device inference</p>
     </section>
-    <section class="viewer-card" aria-label="Camera preview">
+    <section class="viewer-card" aria-label="Video preview">
       <div class="scene-banner" aria-live="polite">
         <div class="scene-banner-mark"><span></span></div>
         <div class="scene-banner-copy">
@@ -45,13 +45,13 @@
         <div id="empty-state" class="empty-state">
           <div class="camera-icon">◎</div>
           <strong>Camera preview</strong>
-          <span>Start the camera or choose an image</span>
+          <span>Start the camera or choose a video</span>
         </div>
       </div>
       <div class="controls">
         <button id="camera-button" class="primary">Start camera</button>
-        <label class="secondary" for="image-input">Choose image</label>
-        <input id="image-input" type="file" accept="image/*" hidden>
+        <label class="secondary" for="video-input">Choose video</label>
+        <input id="video-input" type="file" accept="video/*" hidden>
       </div>
     </section>
     <section class="info-grid">
@@ -63,6 +63,6 @@
     <p id="notice" class="notice" role="status">Checking browser support…</p>
     <footer>Camera frames stay on this device. The original NTU60 classifier returns one scene-level action for its two-person input.</footer>
   </main>
-  <script type="module" src="./app.js?v=5"></script>
+  <script type="module" src="./app.js?v=6"></script>
 </body>
 </html>
