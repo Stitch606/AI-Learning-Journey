@@ -24,6 +24,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+  if (!(await page.locator("#video-input").isEnabled()))
+    throw new Error("Video upload should be available while the pose model is loading.");
 
   await page.waitForFunction(() => window.__ncnnIsolationReady === true ||
     document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
@@ -178,16 +180,16 @@ try {
     await new Promise(resolve => setTimeout(resolve, 250));
     const resumed = video.currentTime > pausedAt;
     video.pause();
-    video.currentTime = Math.max(0, video.duration - 0.15);
+    video.currentTime = 0;
     await video.play();
-    await new Promise(resolve => new Promise(resolveEnded => {
-      if (video.ended) return resolveEnded();
-      video.addEventListener("ended", resolveEnded, { once: true });
-    }));
+    await new Promise(resolve => {
+      if (video.ended) return resolve();
+      video.addEventListener("ended", resolve, { once: true });
+    });
     const ended = video.ended && !button.disabled;
     await video.play();
     await new Promise(resolve => setTimeout(resolve, 250));
-    const replayed = !video.paused && button.disabled && video.currentTime < video.duration;
+    const replayed = !video.paused && button.disabled && video.currentTime > 0;
     return { progressed, heldWhilePaused, resumed, ended, replayed };
   });
   if (Object.values(videoLifecycle).some(value => value !== true))
