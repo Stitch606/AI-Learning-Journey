@@ -27,9 +27,10 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const absoluteUrl = new URL(url, self.location.href).href;
-    const cache = await caches.open(MODEL_CACHE_NAME);
     const request = new Request(absoluteUrl, { method: "GET" });
-    const cached = await cache.match(request);
+    let cache = null;
+    try { cache = "caches" in self ? await caches.open(MODEL_CACHE_NAME) : null; } catch {}
+    const cached = cache ? await cache.match(request).catch(() => null) : null;
     if (cached) {
       const bytes = new Uint8Array(await cached.arrayBuffer());
       if (bytes.length) {
@@ -51,7 +52,9 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
     if (!response.body) {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (!bytes.length) throw new Error(label + " downloaded as an empty file.");
-      try { await cache.put(request, new Response(bytes, { headers: response.headers })); } catch {}
+      try { if (cache) await cache.put(request, new Response(bytes, {
+        headers: { "Content-Type": response.headers.get("content-type") || "application/octet-stream" }
+      })); } catch {}
       return bytes;
     }
 
@@ -80,7 +83,9 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    try { await cache.put(request, new Response(bytes, { headers: response.headers })); } catch {
+    try { if (cache) await cache.put(request, new Response(bytes, {
+      headers: { "Content-Type": response.headers.get("content-type") || "application/octet-stream" }
+    })); } catch {
       self.postMessage({
         type: "progress",
         status: "Model downloaded",

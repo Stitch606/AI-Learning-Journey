@@ -283,7 +283,7 @@ function processPendingFrame() {
 async function captureCameraFrame(timestamp) {
   if (!cameraRunning) return;
 
-  if (timestamp - lastSubmittedAt >= 33 && !inferenceBusy && workerReady &&
+  if (!video.paused && timestamp - lastSubmittedAt >= 33 && !inferenceBusy && workerReady &&
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     lastSubmittedAt = timestamp;
     try {
@@ -403,6 +403,15 @@ videoInput.addEventListener("change", async () => {
     cameraButton.disabled = false;
     cameraButton.textContent = "Start camera";
     notice.textContent = "Video analysis finished.";
+  };
+  video.onplay = () => {
+    if (!cameraRunning && video.src && !cameraStream) {
+      cameraRunning = true;
+      lastSubmittedAt = 0;
+      animationFrame = requestAnimationFrame(captureCameraFrame);
+      cameraButton.disabled = true;
+      cameraButton.textContent = "Video is playing";
+    }
   };
   video.onerror = () => {
     cameraRunning = false;
