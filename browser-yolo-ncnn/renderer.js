@@ -33,12 +33,18 @@ export class PoseRenderer {
     this.sourceHeight = 0;
     this.running = true;
     this.renderScheduled = false;
+    this.lastDetectionAt = 0;
+    this.lastGoodDetections = [];
+    this.lastGoodWidth = 0;
+    this.lastGoodHeight = 0;
+    this.animationFrame = 0;
     this.resizeObserver = new ResizeObserver(() => {
       this.resize();
       this.scheduleRender();
     });
     this.resizeObserver.observe(canvas);
     this.resize();
+    this.startRenderLoop();
   }
 
   resize() {
@@ -59,6 +65,8 @@ export class PoseRenderer {
 
   clear() {
     this.latestDetections = [];
+    this.lastGoodDetections = [];
+    this.lastDetectionAt = 0;
     this.sourceWidth = 0;
     this.sourceHeight = 0;
     this.resize();
@@ -99,11 +107,31 @@ export class PoseRenderer {
   }
 
   draw(detections = [], sourceWidth, sourceHeight, action = null) {
-    this.latestDetections = Array.isArray(detections) ? detections : [];
-    this.sourceWidth = sourceWidth || 0;
-    this.sourceHeight = sourceHeight || 0;
+    const nextDetections = Array.isArray(detections) ? detections : [];
+    if (nextDetections.length) {
+      this.latestDetections = nextDetections;
+      this.lastGoodDetections = nextDetections;
+      this.lastDetectionAt = performance.now();
+      this.lastGoodWidth = sourceWidth || this.sourceWidth;
+      this.lastGoodHeight = sourceHeight || this.sourceHeight;
+    } else if (performance.now() - this.lastDetectionAt > 220) {
+      this.latestDetections = [];
+    } else {
+      this.latestDetections = this.lastGoodDetections;
+    }
+    this.sourceWidth = sourceWidth || this.lastGoodWidth || this.sourceWidth;
+    this.sourceHeight = sourceHeight || this.lastGoodHeight || this.sourceHeight;
     this.latestAction = action;
     this.scheduleRender();
+  }
+
+  startRenderLoop() {
+    const tick = () => {
+      if (!this.running) return;
+      this.renderFrame();
+      this.animationFrame = requestAnimationFrame(tick);
+    };
+    this.animationFrame = requestAnimationFrame(tick);
   }
 
   scheduleRender() {
@@ -253,6 +281,7 @@ export class PoseRenderer {
 
   destroy() {
     this.running = false;
+    cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.smoothed.clear();
     this.latestDetections = [];
