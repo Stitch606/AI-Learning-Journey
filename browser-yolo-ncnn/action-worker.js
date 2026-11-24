@@ -1,4 +1,4 @@
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.mjs";
+let ort = null;
 
 const MODEL_URL = new URL("./model/stgcnpp_ntu60.onnx", import.meta.url).href;
 const LABELS_URL = new URL("./model/ntu60_labels.txt", import.meta.url).href;
@@ -83,8 +83,11 @@ function softmax(x) {
 }
 
 async function init() {
+  self.postMessage({type:"progress",message:"Loading action runtime"});
+  const ortModule = await import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.mjs");
+  ort = ortModule;
   self.postMessage({type:"progress",message:"Loading original NTU60 ST-GCN++"});
-  labels=(await (await fetch(LABELS_URL)).text()).trim().split(/\r?\n/);
+  labels=(await (await fetch(LABELS_URL, {cache:"default"})).text()).trim().split(/\r?\n/);
   ort.env.logLevel="error";
   ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
   ort.env.wasm.numThreads=self.crossOriginIsolated ? Math.max(1,Math.min(self.navigator.hardwareConcurrency||2,4)) : 1;

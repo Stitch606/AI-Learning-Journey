@@ -140,6 +140,8 @@ jobs:
           mkdir -p browser-yolo-ncnn/.ci
           curl -fL --retry 3 https://ultralytics.com/images/bus.jpg -o browser-yolo-ncnn/.ci/bus.jpg
           test -s browser-yolo-ncnn/.ci/bus.jpg
+          ffmpeg -y -loop 1 -i browser-yolo-ncnn/.ci/bus.jpg -t 4 -r 15 -vf "scale=640:-2" -pix_fmt yuv420p -movflags +faststart -an browser-yolo-ncnn/.ci/bus.mp4
+          test -s browser-yolo-ncnn/.ci/bus.mp4
 
       - name: Run real Chromium camera, model and renderer tests
         run: node browser-yolo-ncnn/tests/smoke_test.mjs

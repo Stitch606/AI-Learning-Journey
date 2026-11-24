@@ -5,6 +5,7 @@ const canvas = document.querySelector("#overlay");
 const emptyState = document.querySelector("#empty-state");
 const cameraButton = document.querySelector("#camera-button");
 const videoInput = document.querySelector("#video-input");
+const downloadVideo = document.querySelector("#download-video");
 const statusText = document.querySelector("#runtime-status span");
 const statusDot = document.querySelector("#runtime-status i");
 const notice = document.querySelector("#notice");
@@ -19,32 +20,66 @@ const renderer = new PoseRenderer(canvas, {
 const actionStatus = document.querySelector("#action-status");
 const actionResult = document.querySelector("#action-result");
 const actionConfidence = document.querySelector("#action-confidence");
-const actionWorker = new Worker("./action-worker.js?v=1", { type: "module" });
+let actionWorker = null;
+let actionWorkerReady = false;
+let actionWorkerStarting = false;
+let pendingActionFrames = [];
 let latestDetections = [];
 let latestAction = null;
 let latestWidth = 0;
 let latestHeight = 0;
 
-actionWorker.addEventListener("message", event => {
-  const message = event.data;
-  if (message.type === "progress") actionStatus.textContent = message.message;
-  if (message.type === "ready") {
-    actionStatus.textContent = message.provider;
-    actionResult.textContent = "Waiting for 100 frames";
+function ensureActionWorker() {
+  if (actionWorker || actionWorkerStarting) return;
+  actionWorkerStarting = true;
+  actionStatus.textContent = "Loading action model on demand";
+  actionWorker = new Worker("./action-worker.js?v=2", { type: "module" });
+  actionWorker.addEventListener("message", event => {
+    const message = event.data;
+    if (message.type === "progress") actionStatus.textContent = message.message;
+    if (message.type === "ready") {
+      actionWorkerReady = true;
+      actionWorkerStarting = false;
+      actionStatus.textContent = message.provider + " · collecting 100 frames";
+      actionResult.textContent = "Waiting for 100 frames";
+      for (const frame of pendingActionFrames) actionWorker.postMessage(frame);
+      pendingActionFrames = [];
+    }
+    if (message.type === "action") {
+      latestAction = message.action;
+      actionResult.textContent = message.action.label;
+      actionConfidence.textContent = `${(message.action.confidence * 100).toFixed(1)}%`;
+      actionStatus.textContent = `${(message.action.trackIds || []).length} people in the analyzed pair · ${message.action.inferenceMs.toFixed(1)} ms`;
+      renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
+    }
+    if (message.type === "error" || message.type === "inference-error") {
+      actionStatus.textContent = "Action model error";
+      actionResult.textContent = message.message;
+      actionWorkerStarting = false;
+    }
+  });
+  actionWorker.addEventListener("error", event => {
+    actionStatus.textContent = "Action runtime error";
+    actionResult.textContent = event.message || "Could not load the action model.";
+    actionWorkerStarting = false;
+  });
+  actionWorker.postMessage({ type: "init" });
+}
+
+function sendActionFrame(frame) {
+  if (actionWorkerReady) {
+    actionWorker.postMessage(frame);
+    return;
   }
-  if (message.type === "action") {
-    latestAction = message.action;
-    actionResult.textContent = message.action.label;
-    actionConfidence.textContent = `${(message.action.confidence * 100).toFixed(1)}%`;
-    actionStatus.textContent = `${(message.action.trackIds || []).length} people in the analyzed pair · ${message.action.inferenceMs.toFixed(1)} ms`;
-    renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
-  }
-  if (message.type === "error" || message.type === "inference-error") {
-    actionStatus.textContent = "Action model error";
-    actionResult.textContent = message.message;
-  }
-});
-actionWorker.postMessage({ type: "init" });
+  pendingActionFrames.push(frame);
+  if (pendingActionFrames.length > 100) pendingActionFrames.shift();
+}
+
+function resetActionWorker() {
+  pendingActionFrames = [];
+  latestAction = null;
+  if (actionWorker) actionWorker.postMessage({ type: "reset" });
+}
 
 async function prepareThreadIsolation() {
   if (!("serviceWorker" in navigator)) return false;
@@ -95,7 +130,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=3", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=4", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
@@ -125,7 +160,7 @@ function launchWorker(forceSingleThread = false) {
       latestWidth = message.sourceWidth;
       latestHeight = message.sourceHeight;
       renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
-      actionWorker.postMessage({
+      sendActionFrame({
         type: "pose-frame",
         detections: message.detections,
         sourceWidth: message.sourceWidth,
@@ -284,17 +319,20 @@ async function startCamera() {
 
   try {
     stopCamera();
+    ensureActionWorker();
     video.pause();
     video.removeAttribute("src");
     video.controls = false;
     video.load();
     if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
     selectedVideoUrl = null;
+    downloadVideo.hidden = true;
+    downloadVideo.removeAttribute("href");
     latestAction = null;
     latestDetections = [];
     actionResult.textContent = "Waiting for 100 frames";
     actionConfidence.textContent = "--";
-    actionWorker.postMessage({ type: "reset" });
+    resetActionWorker();
     renderer.clear();
 
     cameraStream = await navigator.mediaDevices.getUserMedia({
@@ -330,18 +368,27 @@ videoInput.addEventListener("change", async () => {
   const file = videoInput.files?.[0];
   if (!file || !workerReady) return;
 
+  if (!file.type.startsWith("video/")) {
+    notice.textContent = "Choose a supported video file.";
+    videoInput.value = "";
+    return;
+  }
   stopCamera();
+  ensureActionWorker();
   latestAction = null;
   latestDetections = [];
   latestWidth = 0;
   latestHeight = 0;
   actionResult.textContent = "Waiting for 100 frames";
   actionConfidence.textContent = "--";
-  actionWorker.postMessage({ type: "reset" });
+  resetActionWorker();
   renderer.clear();
 
   if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
   selectedVideoUrl = URL.createObjectURL(file);
+  downloadVideo.href = selectedVideoUrl;
+  downloadVideo.download = file.name || "analysis-video";
+  downloadVideo.hidden = false;
   video.srcObject = null;
   video.src = selectedVideoUrl;
   video.controls = true;
@@ -365,6 +412,7 @@ videoInput.addEventListener("change", async () => {
     notice.textContent = "This video format could not be played by the browser.";
   };
 
+  videoInput.value = "";
   try {
     await video.play();
     cameraRunning = true;
@@ -382,8 +430,8 @@ videoInput.addEventListener("change", async () => {
 window.addEventListener("pagehide", () => {
   stopCamera();
   pendingBitmap?.close();
-  worker.terminate();
-  actionWorker.terminate();
+  worker?.terminate();
+  actionWorker?.terminate();
   if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
 });
 

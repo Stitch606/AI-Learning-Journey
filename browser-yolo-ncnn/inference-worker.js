@@ -13,6 +13,7 @@ let config = null;
 let frameIndex = 0;
 let nextTrackId = 1;
 let tracks = [];
+const MODEL_CACHE_NAME = "yolo26n-pose-assets-v1";
 
 function allocateCString(value) {
   const size = moduleInstance.lengthBytesUTF8(value) + 1;
@@ -25,11 +26,23 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const absoluteUrl = new URL(url, self.location.href).href;
+    const cache = await caches.open(MODEL_CACHE_NAME);
+    const request = new Request(absoluteUrl, { method: "GET" });
+    const cached = await cache.match(request);
+    if (cached) {
+      const bytes = new Uint8Array(await cached.arrayBuffer());
+      if (bytes.length) {
+        self.postMessage({
+          type: "progress",
+          status: "Using cached " + label,
+          detail: label + ": loaded from this device's model cache (" + (bytes.length / 1048576).toFixed(2) + " MB)."
+        });
+        return bytes;
+      }
+    }
     self.postMessage({ type: "progress", status: "Downloading " + label, detail: "Connecting to the model file…" });
-    const response = await fetch(url, {
-      signal: controller.signal,
-      cache: "no-store"
-    });
+    const response = await fetch(request, { signal: controller.signal, cache: "default" });
     if (!response.ok) {
       const error = new Error(label + " download failed (HTTP " + response.status + ").");
       error.stage = "model";
@@ -38,6 +51,7 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
     if (!response.body) {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (!bytes.length) throw new Error(label + " downloaded as an empty file.");
+      try { await cache.put(request, new Response(bytes, { headers: response.headers })); } catch {}
       return bytes;
     }
 
@@ -52,10 +66,11 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
       loaded += value.byteLength;
       const received = (loaded / 1048576).toFixed(2);
       const expected = total ? " / " + (total / 1048576).toFixed(2) + " MB" : "";
+      const percent = total ? " (" + Math.min(100, Math.round(loaded / total * 100)) + "%)" : "";
       self.postMessage({
         type: "progress",
         status: "Downloading " + label,
-        detail: label + ": " + received + " MB" + expected
+        detail: label + ": " + received + " MB" + expected + percent
       });
     }
     if (!loaded) throw new Error(label + " downloaded as an empty file.");
@@ -64,6 +79,13 @@ async function downloadBytes(url, label, timeoutMs = 120000) {
     for (const chunk of chunks) {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
+    }
+    try { await cache.put(request, new Response(bytes, { headers: response.headers })); } catch {
+      self.postMessage({
+        type: "progress",
+        status: "Model downloaded",
+        detail: label + " is ready; persistent browser storage was unavailable, so it may download again next time."
+      });
     }
     return bytes;
   } catch (error) {

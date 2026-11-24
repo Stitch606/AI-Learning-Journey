@@ -73,28 +73,38 @@ try {
     null,
     { timeout: 120000 }
   );
-  await page.locator("#image-input").setInputFiles("browser-yolo-ncnn/.ci/bus.jpg");
+  await page.locator("#video-input").setInputFiles("browser-yolo-ncnn/.ci/bus.mp4");
+  await page.waitForFunction(() => {
+    const video = document.querySelector("#camera");
+    const download = document.querySelector("#download-video");
+    return video && video.videoWidth > 0 && video.videoHeight > 0 &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      download && !download.hidden && download.href.startsWith("blob:") && Boolean(download.download);
+  }, null, { timeout: 30000 });
   await page.waitForFunction(() => {
     const canvas = document.querySelector("#overlay");
     if (!canvas || !canvas.width || !canvas.height) return false;
     const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
-    for (let i = 3; i < pixels.length; i += 4) {
-      if (pixels[i] > 0) return true;
-    }
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) return true;
     return false;
   }, null, { timeout: 30000 });
-  const appImagePipeline = await page.evaluate(() => {
+  const appVideoPipeline = await page.evaluate(() => {
+    const video = document.querySelector("#camera");
     const canvas = document.querySelector("#overlay");
+    const download = document.querySelector("#download-video");
     return {
-      previewLoaded: document.querySelector("#image-preview")?.naturalWidth > 0,
+      previewLoaded: video.videoWidth > 0 && video.videoHeight > 0,
+      localObjectUrl: video.currentSrc.startsWith("blob:"),
+      downloadAvailable: !download.hidden && download.href.startsWith("blob:"),
+      downloadFilename: download.download,
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
       renderedPixels: true
     };
   });
-  if (!appImagePipeline.previewLoaded)
-    throw new Error("The application image preview did not load.");
-  console.log(`APP_IMAGE_PIPELINE_OK ${JSON.stringify(appImagePipeline)}`);
+  if (!appVideoPipeline.previewLoaded || !appVideoPipeline.localObjectUrl || !appVideoPipeline.downloadAvailable)
+    throw new Error("The local video preview or download action did not initialize.");
+  console.log(`APP_VIDEO_PIPELINE_OK ${JSON.stringify(appVideoPipeline)}`);
 
   const benchmark = await page.evaluate(async () => {
     const worker = new Worker("./inference-worker.js", { type: "module" });
