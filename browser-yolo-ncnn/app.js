@@ -124,7 +124,7 @@ let workerStage = "Starting NCNN";
 let usingSingleThreadFallback = false;
 
 cameraButton.disabled = false;
-videoInput.disabled = true;
+videoInput.disabled = false;
 
 function launchWorker(forceSingleThread = false) {
   clearTimeout(workerInitTimer);
@@ -152,7 +152,14 @@ function launchWorker(forceSingleThread = false) {
       setStatus(message.runtimeMode === "simd-threads"
         ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
         : "NCNN · SIMD · single thread · model ready", true);
-      notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose a video.";
+      if (cameraRunning) {
+        if (!animationFrame) animationFrame = requestAnimationFrame(captureCameraFrame);
+        notice.textContent = selectedVideoUrl
+          ? "YOLO26n-Pose is ready. Local video analysis is running."
+          : "YOLO26n-Pose is ready. Live pose inference is running.";
+      } else {
+        notice.textContent = "YOLO26n-Pose is loaded locally. Start the camera or choose a video.";
+      }
       return;
     }
 
@@ -304,6 +311,7 @@ async function captureCameraFrame(timestamp) {
 function stopCamera() {
   cameraRunning = false;
   cancelAnimationFrame(animationFrame);
+  animationFrame = 0;
   if (cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
     cameraStream = null;
@@ -357,7 +365,7 @@ async function startCamera() {
     cameraButton.textContent = "Camera running";
     cameraButton.disabled = true;
     notice.textContent = "Live pose inference is running on this device.";
-    animationFrame = requestAnimationFrame(captureCameraFrame);
+    if (workerReady && !animationFrame) animationFrame = requestAnimationFrame(captureCameraFrame);
   } catch (error) {
     notice.textContent = "Could not start camera: " + error.message;
   }
@@ -367,7 +375,7 @@ cameraButton.addEventListener("click", startCamera);
 
 videoInput.addEventListener("change", async () => {
   const file = videoInput.files?.[0];
-  if (!file || !workerReady) return;
+  if (!file) return;
 
   if (!file.type.startsWith("video/")) {
     notice.textContent = "Choose a supported video file.";
@@ -402,6 +410,7 @@ videoInput.addEventListener("change", async () => {
   video.onended = () => {
     cameraRunning = false;
     cancelAnimationFrame(animationFrame);
+    animationFrame = 0;
     cameraButton.disabled = false;
     cameraButton.textContent = "Start camera";
     notice.textContent = "Video analysis finished.";
@@ -418,6 +427,7 @@ videoInput.addEventListener("change", async () => {
   video.onerror = () => {
     cameraRunning = false;
     cancelAnimationFrame(animationFrame);
+    animationFrame = 0;
     cameraButton.disabled = false;
     cameraButton.textContent = "Start camera";
     notice.textContent = "This video format could not be played by the browser.";
@@ -430,7 +440,7 @@ videoInput.addEventListener("change", async () => {
     cameraRunning = true;
     lastSubmittedAt = 0;
     notice.textContent = "Analyzing the selected video locally. Use the video controls to pause or seek.";
-    animationFrame = requestAnimationFrame(captureCameraFrame);
+    if (workerReady && !animationFrame) animationFrame = requestAnimationFrame(captureCameraFrame);
   } catch (error) {
     cameraRunning = false;
     cameraButton.disabled = false;

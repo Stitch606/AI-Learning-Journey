@@ -41,8 +41,11 @@ try {
     crossOriginIsolated,
     sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined"
   }));
-  if (!isolation.crossOriginIsolated || !isolation.sharedArrayBuffer)
-    throw new Error("Browser did not enable cross-origin isolation for threaded NCNN.");
+  const initialRuntimeStatus = await page.locator("#runtime-status span").textContent();
+  const threadedRuntimeAvailable = isolation.crossOriginIsolated && isolation.sharedArrayBuffer;
+  if (!threadedRuntimeAvailable && !initialRuntimeStatus.includes("single thread"))
+    throw new Error("The app did not select its single-thread fallback when SharedArrayBuffer was unavailable.");
+  console.log(`RUNTIME_MODE ${JSON.stringify({ ...isolation, selected: threadedRuntimeAvailable ? "simd-threads" : "simd-single" })}`);
 
   const simd = await page.evaluate(() => WebAssembly.validate(new Uint8Array([
     0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,22,1,20,0,253,12,
@@ -100,7 +103,7 @@ try {
     const drawTimer = setInterval(() => {
       context.drawImage(image, 0, 0);
       frames += 1;
-      if (frames >= 45) {
+      if (frames >= 120) {
         clearInterval(drawTimer);
         recorder.stop();
       }
@@ -159,7 +162,37 @@ try {
   if (downloadedVideo.suggestedFilename() !== "bus.webm")
     throw new Error("The downloaded video did not preserve its original filename.");
   appVideoPipeline.downloadTriggered = true;
-  console.log(`APP_VIDEO_PIPELINE_OK ${JSON.stringify(appVideoPipeline)}`);
+  const videoLifecycle = await page.evaluate(async () => {
+    const video = document.querySelector("#camera");
+    const button = document.querySelector("#camera-button");
+    video.pause();
+    video.currentTime = 0.5;
+    await video.play();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const progressed = video.currentTime > 0.5;
+    video.pause();
+    const pausedAt = video.currentTime;
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const heldWhilePaused = Math.abs(video.currentTime - pausedAt) < 0.05;
+    await video.play();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const resumed = video.currentTime > pausedAt;
+    video.pause();
+    video.currentTime = Math.max(0, video.duration - 0.15);
+    await video.play();
+    await new Promise(resolve => new Promise(resolveEnded => {
+      if (video.ended) return resolveEnded();
+      video.addEventListener("ended", resolveEnded, { once: true });
+    }));
+    const ended = video.ended && !button.disabled;
+    await video.play();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const replayed = !video.paused && button.disabled && video.currentTime < video.duration;
+    return { progressed, heldWhilePaused, resumed, ended, replayed };
+  });
+  if (Object.values(videoLifecycle).some(value => value !== true))
+    throw new Error("Video pause, resume, end, or replay lifecycle failed: " + JSON.stringify(videoLifecycle));
+  console.log(`APP_VIDEO_PIPELINE_OK ${JSON.stringify({ ...appVideoPipeline, lifecycle: videoLifecycle })}`);
 
   const benchmark = await page.evaluate(async () => {
     const worker = new Worker("./inference-worker.js", { type: "module" });
