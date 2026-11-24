@@ -1,4 +1,4 @@
-import { PoseRenderer } from "./renderer.js?v=3";
+import { PoseRenderer } from "./renderer.js?v=4";
 
 const video = document.querySelector("#camera");
 const canvas = document.querySelector("#overlay");
