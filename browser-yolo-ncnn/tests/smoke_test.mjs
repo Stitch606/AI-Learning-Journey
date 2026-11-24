@@ -73,7 +73,55 @@ try {
     null,
     { timeout: 120000 }
   );
-  await page.locator("#video-input").setInputFiles("browser-yolo-ncnn/.ci/bus.mp4");
+  const videoFixtureBase64 = await page.evaluate(async () => {
+    const image = new Image();
+    image.src = "./.ci/bus.jpg";
+    await image.decode();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+
+    const stream = canvas.captureStream(15);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8"
+      : "video/webm";
+    const recorder = new MediaRecorder(stream, { mimeType });
+    const chunks = [];
+    recorder.addEventListener("dataavailable", event => {
+      if (event.data.size) chunks.push(event.data);
+    });
+    const stopped = new Promise(resolve => recorder.addEventListener("stop", resolve, { once: true }));
+    recorder.start(200);
+
+    let frames = 0;
+    const drawTimer = setInterval(() => {
+      context.drawImage(image, 0, 0);
+      frames += 1;
+      if (frames >= 45) {
+        clearInterval(drawTimer);
+        recorder.stop();
+      }
+    }, 1000 / 15);
+
+    await stopped;
+    stream.getTracks().forEach(track => track.stop());
+    const blob = new Blob(chunks, { type: mimeType });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary);
+  });
+  if (!videoFixtureBase64) throw new Error("Chromium did not create the local WebM test video.");
+  await page.locator("#video-input").setInputFiles({
+    name: "bus.webm",
+    mimeType: "video/webm",
+    buffer: Buffer.from(videoFixtureBase64, "base64")
+  });
   await page.waitForFunction(() => {
     const video = document.querySelector("#camera");
     const download = document.querySelector("#download-video");
@@ -104,6 +152,13 @@ try {
   });
   if (!appVideoPipeline.previewLoaded || !appVideoPipeline.localObjectUrl || !appVideoPipeline.downloadAvailable)
     throw new Error("The local video preview or download action did not initialize.");
+  const [downloadedVideo] = await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("#download-video").click()
+  ]);
+  if (downloadedVideo.suggestedFilename() !== "bus.webm")
+    throw new Error("The downloaded video did not preserve its original filename.");
+  appVideoPipeline.downloadTriggered = true;
   console.log(`APP_VIDEO_PIPELINE_OK ${JSON.stringify(appVideoPipeline)}`);
 
   const benchmark = await page.evaluate(async () => {
