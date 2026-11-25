@@ -56,6 +56,7 @@ jobs:
         run: |
           set -euxo pipefail
           git clone --depth 1 https://github.com/Tencent/ncnn.git "$RUNNER_TEMP/ncnn"
+
           COMMON_FLAGS=(
             -DCMAKE_BUILD_TYPE=Release
             -DNCNN_SIMPLEOCV=ON
@@ -71,17 +72,21 @@ jobs:
             -DNCNN_BUILD_SHARED_LIBS=OFF
           )
 
-          # Compatibility build: works on GitHub Pages even without cross-origin isolation.
+          # Compile NCNN itself with WebAssembly SIMD, not only the small bridge.
           emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build-simd" \
             "${COMMON_FLAGS[@]}" \
+            -DCMAKE_C_FLAGS="-O3 -msimd128" \
+            -DCMAKE_CXX_FLAGS="-O3 -msimd128" \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install-simd" \
             -DNCNN_THREADS=OFF -DNCNN_OPENMP=OFF -DNCNN_SIMPLEOMP=OFF
           cmake --build "$RUNNER_TEMP/ncnn/build-simd" --parallel 4
           cmake --install "$RUNNER_TEMP/ncnn/build-simd"
 
-          # Faster multi-core build for browsers with SharedArrayBuffer enabled.
+          # The threaded NCNN library and its bridge both require pthread compilation.
           emcmake cmake -S "$RUNNER_TEMP/ncnn" -B "$RUNNER_TEMP/ncnn/build-simd-threads" \
             "${COMMON_FLAGS[@]}" \
+            -DCMAKE_C_FLAGS="-O3 -msimd128 -pthread" \
+            -DCMAKE_CXX_FLAGS="-O3 -msimd128 -pthread" \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ncnn-install-simd-threads" \
             -DNCNN_THREADS=ON -DNCNN_OPENMP=ON -DNCNN_SIMPLEOMP=ON
           cmake --build "$RUNNER_TEMP/ncnn/build-simd-threads" --parallel 4
