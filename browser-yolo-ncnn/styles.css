@@ -157,3 +157,60 @@ footer { margin-top: 24px; color: #77758a; text-align: center; font-size: 11px; 
   .scene-confidence { min-width: 61px; padding-left: 9px; }
   .scene-confidence strong { font-size: 17px; }
 }
+
+
+/* ONNX model download progress */
+.model-progress {
+  margin: 14px 2px 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(155, 112, 255, .25);
+  border-radius: 12px;
+  background: rgba(20, 20, 31, .82);
+}
+.model-progress[hidden] { display: none; }
+.model-progress-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.model-progress-heading strong {
+  color: #aaa1c8;
+  font-size: 9px;
+  letter-spacing: .15em;
+}
+.model-progress-heading span {
+  color: var(--cyan);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.model-progress progress {
+  display: block;
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 99px;
+  background: #29283a;
+  accent-color: var(--purple);
+}
+.model-progress progress::-webkit-progress-bar { background: #29283a; border-radius: 99px; }
+.model-progress progress::-webkit-progress-value {
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+}
+.model-progress progress::-moz-progress-bar {
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+}
+.model-progress progress[data-indeterminate="true"] {
+  background: linear-gradient(90deg, #29283a 20%, #7660a8 50%, #29283a 80%);
+  background-size: 200% 100%;
+  animation: model-download-pulse 1.4s linear infinite;
+}
+@keyframes model-download-pulse {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
