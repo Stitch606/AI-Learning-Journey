@@ -7,6 +7,7 @@ import sys
 
 import numpy as np
 import onnx
+from onnx import TensorProto
 import onnxruntime as ort
 import torch
 from onnxconverter_common import float16
@@ -26,6 +27,22 @@ class ExportWrapper(nn.Module):
 
     def forward(self, keypoint):
         return self.model.forward_logits(keypoint)
+
+
+def validate_fp16_graph(graph: onnx.ModelProto, label: str) -> int:
+    onnx.checker.check_model(graph)
+    fp16_initializers = sum(
+        tensor.data_type == TensorProto.FLOAT16 for tensor in graph.graph.initializer
+    )
+    if fp16_initializers == 0:
+        raise RuntimeError(f"{label} contains no FP16 weights.")
+    input_info = graph.graph.input[0]
+    output_info = graph.graph.output[0]
+    if input_info.type.tensor_type.elem_type != TensorProto.FLOAT:
+        raise RuntimeError(f"{label} input must remain FP32.")
+    if output_info.type.tensor_type.elem_type != TensorProto.FLOAT:
+        raise RuntimeError(f"{label} output must remain FP32.")
+    return fp16_initializers
 
 
 def main():
@@ -58,12 +75,13 @@ def main():
     graph = onnx.load(str(fp32_output))
     onnx.checker.check_model(graph)
     converted = float16.convert_float_to_float16(graph, keep_io_types=True)
-    onnx.checker.check_model(converted)
+    fp16_initializers = validate_fp16_graph(converted, "ST-GCN++ FP16 ONNX")
     onnx.save(converted, str(fp16_output))
 
     print(json.dumps({
         "fp32_bytes": fp32_output.stat().st_size,
         "fp16_bytes": fp16_output.stat().st_size,
+        "fp16_initializers": fp16_initializers,
         "input": "[B,1,2,100,17,3]",
         "output": "[B,60]",
         "precision": "FP16 weights/internal operators; FP32 input/output",
@@ -81,8 +99,14 @@ def main():
         max_abs = float(np.max(np.abs(expected - actual)))
         mean_abs = float(np.mean(np.abs(expected - actual)))
         if not np.allclose(expected, actual, rtol=2e-3, atol=2e-4):
-            raise AssertionError(f"ONNX/PyTorch mismatch: max_abs={max_abs:.8g}, mean_abs={mean_abs:.8g}")
-        print(json.dumps({"fp32_verification":"passed","max_abs_error":max_abs,"mean_abs_error":mean_abs},indent=2))
+            raise AssertionError(
+                f"ONNX/PyTorch mismatch: max_abs={max_abs:.8g}, mean_abs={mean_abs:.8g}"
+            )
+        print(json.dumps({
+            "fp32_verification": "passed",
+            "max_abs_error": max_abs,
+            "mean_abs_error": mean_abs,
+        }, indent=2))
 
 
 if __name__ == "__main__":
