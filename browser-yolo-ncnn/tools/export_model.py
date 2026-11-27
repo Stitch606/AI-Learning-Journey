@@ -53,7 +53,7 @@ def _assert_model_contract(
     fp16_initializers = sum(
         tensor.data_type == TensorProto.FLOAT16 for tensor in graph.graph.initializer
     )
-    if fp16_initializers == 0:
+    if require_fp16 and fp16_initializers == 0:
         raise RuntimeError(f"{label} contains no FP16 weights.")
 
     return {
