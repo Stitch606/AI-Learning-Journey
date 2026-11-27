@@ -9,6 +9,9 @@ const downloadVideo = document.querySelector("#download-video");
 const statusText = document.querySelector("#runtime-status span");
 const statusDot = document.querySelector("#runtime-status i");
 const notice = document.querySelector("#notice");
+const modelProgress = document.querySelector("#model-progress");
+const modelProgressBar = document.querySelector("#model-progress-bar");
+const modelProgressText = document.querySelector("#model-progress-text");
 const perfLine = document.querySelector("#perf");
 
 let lastResultAt = 0;
@@ -157,7 +160,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=6", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=7", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
@@ -166,6 +169,25 @@ function launchWorker(forceSingleThread = false) {
       workerStage = message.status;
       setStatus(message.status);
       notice.textContent = message.detail;
+      if (message.loaded !== undefined) {
+        modelProgress.hidden = false;
+        modelProgressText.textContent = message.total
+          ? `${(message.loaded / 1048576).toFixed(2)} / ${(message.total / 1048576).toFixed(2)} MB · ${Math.min(100, Math.round(message.loaded / message.total * 100))}%`
+          : `${(message.loaded / 1048576).toFixed(2)} MB downloaded`;
+        if (message.total) {
+          modelProgressBar.max = message.total;
+          modelProgressBar.value = message.loaded;
+          modelProgressBar.removeAttribute("data-indeterminate");
+        } else {
+          modelProgressBar.removeAttribute("value");
+          modelProgressBar.setAttribute("data-indeterminate", "true");
+        }
+      } else {
+        modelProgress.hidden = false;
+        modelProgressText.textContent = message.detail || message.status;
+        modelProgressBar.removeAttribute("value");
+        modelProgressBar.setAttribute("data-indeterminate", "true");
+      }
       armWorkerTimeout();
       return;
     }
@@ -176,6 +198,11 @@ function launchWorker(forceSingleThread = false) {
       cameraButton.disabled = cameraRunning;
       videoInput.disabled = false;
       gpuLabel = message.provider || "YOLO runtime ready";
+      modelProgress.hidden = false;
+      modelProgressBar.max = 1;
+      modelProgressBar.value = 1;
+      modelProgressBar.removeAttribute("data-indeterminate");
+      modelProgressText.textContent = "YOLO model ready";
       setStatus(`${message.provider} · 512×512 · model ready`, true);
       if (cameraRunning) {
         if (!animationFrame) animationFrame = requestAnimationFrame(captureCameraFrame);
