@@ -24,7 +24,7 @@ def _shape(value_info):
     ]
 
 
-def _assert_model_contract(graph: onnx.ModelProto, label: str) -> dict:
+def _assert_model_contract(\n    graph: onnx.ModelProto, label: str, *, require_fp16: bool = False\n) -> dict:
     onnx.checker.check_model(graph)
     if not graph.graph.input or not graph.graph.output:
         raise RuntimeError(f"{label} has no graph input/output.")
@@ -89,7 +89,7 @@ def main() -> None:
     fp32_contract = _assert_model_contract(fp32_graph, "YOLO FP32 ONNX")
 
     fp16_graph = float16.convert_float_to_float16(fp32_graph, keep_io_types=True)
-    fp16_contract = _assert_model_contract(fp16_graph, "YOLO FP16 ONNX")
+    fp16_contract = _assert_model_contract(fp16_graph, "YOLO FP16 ONNX", require_fp16=True)
     onnx.save(fp16_graph, str(fp16_path))
 
     report = {
