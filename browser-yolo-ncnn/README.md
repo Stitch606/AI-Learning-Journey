@@ -1,22 +1,29 @@
 # Browser YOLO26 Pose + ST-GCN++ Action Recognition
 
-A browser-local vision pipeline hosted as static files on GitHub Pages. Camera frames remain on the visitor's device.
+Browser-local pipeline hosted as static files on GitHub Pages. Camera frames remain on the visitor's device.
 
-## Models
+## Models and precision
 
-- **YOLO26n-Pose**: exported to NCNN FP16 at 416x416. The browser runs the NCNN build as WebAssembly SIMD, using multiple CPU threads when cross-origin isolation is available and a single-thread fallback otherwise.
-- **ST-GCN++**: the original two-person NTU60 XSub HRNet Joint-Motion architecture and checkpoint are preserved. The model is exported to ONNX without changing its weights or two-person input contract. ONNX Runtime Web uses WebGPU when available and falls back to WebAssembly CPU.
+- YOLO26n-Pose is exported to ONNX at a fixed 512×512 input. The deployment build produces an FP16 ONNX model for WebGPU and a separate FP32 compatibility model for browsers without WebGPU.
+- ST-GCN++ preserves the original two-person NTU60 XSub HRNet Joint-Motion architecture and checkpoint. Its ONNX exports include FP16 for WebGPU and FP32 for CPU fallback.
+- FP16 conversion keeps model inputs and outputs in FP32 while converting floating-point weights and internal graph operations to FP16.
 
-## ST-GCN++ input and output
+## Runtime
 
-The action classifier receives `[1,1,2,100,17,3]`: one clip, two people, 100 frames, 17 COCO joints, and x/y/joint-motion confidence channels. It returns one of the original 60 NTU60 scene-level classes. The UI draws a group rectangle around the two selected people; it does not claim to identify which person performed the action.
+YOLO and ST-GCN++ run through ONNX Runtime Web. WebGPU is selected first and explicitly; when it cannot initialize, the matching FP32 model is loaded with the WASM CPU provider. The UI reports the provider actually selected by the YOLO inference session, not merely whether the browser exposes `navigator.gpu`.
 
-The source architecture is `stgcn/model.py`, and the original checkpoint is copied to `model/stgcnpp_ntu60_xsub_hrnet.pth`. The deployment workflow exports `model/stgcnpp_ntu60.onnx` and runs the browser smoke test.
+## YOLO input/output contract
 
-## Browser acceleration
+YOLO receives RGB float32 input shaped `[1,3,512,512]`, letterboxed from the source frame. The raw pose head returns 56 values per candidate: box center/size, person confidence, and 17 COCO keypoints. Browser-side decoding restores coordinates to the source frame, applies confidence filtering and NMS, and assigns lightweight track IDs.
 
-Browsers do not expose raw Vulkan or OpenGL compute APIs to web applications. NCNN's browser WebAssembly build therefore uses CPU SIMD/threads. GPU inference in the browser uses WebGPU through ONNX Runtime Web; WebGPU is the browser API that can map to native Vulkan, Metal, or Direct3D backends depending on the device and browser.
+## ST-GCN++ input/output contract
 
-## Privacy and deployment
+The action classifier receives `[1,1,2,100,17,3]`: one clip, two people, 100 frames, 17 COCO joints, and x/y/joint-motion confidence channels. It returns one of the original 60 NTU60 classes. The original checkpoint and two-person input contract are preserved.
 
-GitHub Pages serves static assets only. Model inference runs locally in dedicated workers. No camera frame or selected image is uploaded for inference.
+## Verification
+
+The deployment workflow exports both FP16 models, validates ONNX graphs, verifies the FP32 ST-GCN++ export against PyTorch, checks YOLO's fixed 512 input, and runs the browser smoke test. The smoke test runs in CI's Chromium environment; final GPU speed and WebGPU FP16 compatibility must also be measured on the target Android phone.
+
+## Privacy
+
+GitHub Pages serves static assets only. Model inference runs locally in dedicated workers. Camera frames and selected videos are not uploaded for inference.
