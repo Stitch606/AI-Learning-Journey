@@ -1,93 +1,64 @@
-from pathlib import Path
+from __future__ import annotations
+
 import json
+from pathlib import Path
 import shutil
 
+import onnx
+from onnxconverter_common import float16
 from ultralytics import YOLO
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = ROOT / "model"
 SOURCE_MODEL = "yolo26n-pose.pt"
-IMAGE_SIZE = 416
-
-
-def read_model_io(param_path: Path) -> tuple[str, str]:
-    lines = [
-        line.strip()
-        for line in param_path.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    layers = []
-    for line in lines[2:]:
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        try:
-            bottom_count = int(parts[2])
-            top_count = int(parts[3])
-        except ValueError:
-            continue
-        bottom_start = 4
-        top_start = bottom_start + bottom_count
-        bottoms = parts[bottom_start:top_start]
-        tops = parts[top_start:top_start + top_count]
-        if len(tops) == top_count:
-            layers.append((parts[0], bottoms, tops))
-
-    inputs = [name for layer_type, _, tops in layers
-              if layer_type == "Input" for name in tops]
-    all_tops = {name for _, _, tops in layers for name in tops}
-    all_bottoms = {name for _, bottoms, _ in layers for name in bottoms}
-    outputs = sorted(all_tops - all_bottoms)
-
-    if len(inputs) != 1:
-        raise RuntimeError(f"Expected one NCNN input blob, found {inputs}")
-    if len(outputs) != 1:
-        raise RuntimeError(f"Expected one NCNN output blob, found {outputs}")
-    return inputs[0], outputs[0]
+IMAGE_SIZE = 512
 
 
 def main() -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model = YOLO(SOURCE_MODEL)
-    num_classes = int(model.model.model[-1].nc)
+
+    # Export the raw pose head so the browser performs the same confidence/NMS
+    # decoding as the previous NCNN bridge.
+    head = model.model.model[-1]
+    if hasattr(head, "end2end"):
+        head.end2end = False
+
     exported = Path(model.export(
-        format="ncnn",
-        quantize=16,
+        format="onnx",
         imgsz=IMAGE_SIZE,
+        half=False,
+        dynamic=False,
+        simplify=True,
+        opset=17,
         device="cpu",
     ))
+    fp32_path = MODEL_DIR / "yolo26n-pose-512-fp32.onnx"
+    fp16_path = MODEL_DIR / "yolo26n-pose-512-fp16.onnx"
+    shutil.copy2(exported, fp32_path)
 
-    param_files = list(exported.glob("*.param"))
-    bin_files = list(exported.glob("*.bin"))
-    if len(param_files) != 1 or len(bin_files) != 1:
-        raise RuntimeError(
-            f"Expected exactly one NCNN param/bin pair in {exported}; "
-            f"found {len(param_files)} param and {len(bin_files)} bin files"
-        )
+    graph = onnx.load(str(fp32_path))
+    onnx.checker.check_model(graph)
+    converted = float16.convert_float_to_float16(graph, keep_io_types=True)
+    onnx.checker.check_model(converted)
+    onnx.save(converted, str(fp16_path))
 
-    param_path = MODEL_DIR / "model.param"
-    bin_path = MODEL_DIR / "model.bin"
-    shutil.copy2(param_files[0], param_path)
-    shutil.copy2(bin_files[0], bin_path)
-
-    input_blob, output_blob = read_model_io(param_path)
-    config = {
-        "input": input_blob,
-        "output": output_blob,
-        "input_size": IMAGE_SIZE,
-        "keypoints": 17,
-        "values_per_candidate": 56,
-        "num_classes": num_classes,
-        "precision": "FP16",
+    input_info = graph.graph.input[0]
+    output_info = graph.graph.output[0]
+    report = {
         "model": SOURCE_MODEL,
+        "input_size": IMAGE_SIZE,
+        "input_name": input_info.name,
+        "output_name": output_info.name,
+        "precision": "FP16 weights and internal floating-point operators; FP32 input/output",
+        "fp32_bytes": fp32_path.stat().st_size,
+        "fp16_bytes": fp16_path.stat().st_size,
+        "output_shape": [d.dim_value or d.dim_param for d in output_info.type.tensor_type.shape.dim],
     }
-    (MODEL_DIR / "model-config.json").write_text(
-        json.dumps(config, indent=2) + "\n"
-    )
-
-    print(json.dumps(config, indent=2))
-    for path in (param_path, bin_path, MODEL_DIR / "model-config.json"):
-        print(f"{path.name}: {path.stat().st_size:,} bytes")
+    (MODEL_DIR / "yolo-onnx-config.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+    if fp16_path.stat().st_size >= fp32_path.stat().st_size:
+        raise RuntimeError("FP16 ONNX export did not reduce model size.")
 
 
 if __name__ == "__main__":
