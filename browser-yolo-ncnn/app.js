@@ -9,6 +9,32 @@ const downloadVideo = document.querySelector("#download-video");
 const statusText = document.querySelector("#runtime-status span");
 const statusDot = document.querySelector("#runtime-status i");
 const notice = document.querySelector("#notice");
+const perfLine = document.querySelector("#perf");
+
+let lastResultAt = 0;
+let fpsEma = 0;
+let lastCaptureMs = 0;
+let gpuLabel = "WebGPU: checking";
+if (navigator.gpu) {
+  navigator.gpu.requestAdapter()
+    .then(adapter => { gpuLabel = adapter ? "WebGPU: available" : "WebGPU: no adapter"; })
+    .catch(() => { gpuLabel = "WebGPU: error"; });
+} else {
+  gpuLabel = "WebGPU: not supported";
+}
+
+function updatePerf(message) {
+  const now = performance.now();
+  if (lastResultAt) {
+    const fps = 1000 / (now - lastResultAt);
+    fpsEma = fpsEma ? fpsEma * 0.8 + fps * 0.2 : fps;
+  }
+  lastResultAt = now;
+  perfLine.textContent =
+    `${fpsEma.toFixed(1)} FPS · capture ${lastCaptureMs.toFixed(0)} ms · ` +
+    `prep ${message.prepMs.toFixed(0)} ms · NCNN ${message.inferenceMs.toFixed(0)} ms · ` +
+    `decode ${message.decodeMs.toFixed(1)} ms · ${gpuLabel}`;
+}
 
 const renderer = new PoseRenderer(canvas, {
   keypointThreshold: 0.25,
@@ -131,7 +157,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=4", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=5", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
@@ -167,6 +193,7 @@ function launchWorker(forceSingleThread = false) {
       latestDetections = message.detections;
       latestWidth = message.sourceWidth;
       latestHeight = message.sourceHeight;
+      updatePerf(message);
       renderer.draw(latestDetections, latestWidth, latestHeight, latestAction);
       sendActionFrame({
         type: "pose-frame",
@@ -295,7 +322,9 @@ async function captureCameraFrame(timestamp) {
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     lastSubmittedAt = timestamp;
     try {
+      const captureStart = performance.now();
       const bitmap = await createImageBitmap(video);
+      lastCaptureMs = performance.now() - captureStart;
       if (cameraRunning) submitBitmap(bitmap);
       else bitmap.close();
     } catch (error) {
