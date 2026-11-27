@@ -1,0 +1,48 @@
+name: Validate Browser YOLO WebGPU FP16
+
+on:
+  push:
+    branches: [feat/yolo-webgpu-fp16-512]
+    paths:
+      - "browser-yolo-ncnn/**"
+      - ".github/workflows/validate-browser-yolo-webgpu.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "browser-yolo-ncnn/**"
+      - ".github/workflows/validate-browser-yolo-webgpu.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Export and verify FP16 models
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ultralytics onnx onnxruntime onnxconverter-common numpy
+          python browser-yolo-ncnn/stgcn/export_onnx.py --verify
+          python browser-yolo-ncnn/tools/export_model.py
+          test -s browser-yolo-ncnn/model/yolo26n-pose-512-fp16.onnx
+          test -s browser-yolo-ncnn/model/yolo26n-pose-512-fp32.onnx
+          test -s browser-yolo-ncnn/model/stgcnpp_ntu60-fp16.onnx
+          test -s browser-yolo-ncnn/model/stgcnpp_ntu60-fp32.onnx
+
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run browser inference tests
+        run: |
+          mkdir -p browser-yolo-ncnn/.ci
+          curl -fL --retry 3 https://ultralytics.com/images/bus.jpg -o browser-yolo-ncnn/.ci/bus.jpg
+          node browser-yolo-ncnn/tests/smoke_test.mjs
