@@ -214,3 +214,43 @@ footer { margin-top: 24px; color: #77758a; text-align: center; font-size: 11px; 
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }
 }
+
+/* Download progress occupies the former confidence slot in the scene banner. */
+.scene-download {
+  flex: 0 1 245px;
+  width: 245px;
+  min-width: 150px;
+  margin: 0;
+  padding: 9px 10px;
+  border-color: rgba(94, 231, 220, .24);
+  background: rgba(9, 10, 18, .58);
+}
+.scene-download .model-progress-heading {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 7px;
+}
+.scene-download .model-progress-heading strong {
+  color: #9f9bb7;
+  font-size: 8px;
+}
+.scene-download .model-progress-heading span {
+  width: 100%;
+  text-align: left;
+  font-size: 10px;
+}
+.scene-download progress { height: 6px; }
+@media (max-width: 560px) {
+  .scene-banner { flex-wrap: wrap; }
+  .scene-download {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+  .scene-download .model-progress-heading {
+    flex-direction: row;
+    align-items: center;
+  }
+  .scene-download .model-progress-heading span { text-align: right; }
+}
