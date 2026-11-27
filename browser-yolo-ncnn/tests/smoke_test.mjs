@@ -27,33 +27,21 @@ try {
   if (!(await page.locator("#video-input").isEnabled()))
     throw new Error("Video upload should be available while the pose model is loading.");
 
-  await page.waitForFunction(() => window.__ncnnIsolationReady === true ||
-    document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
-    null, { timeout: 20000 });
+  await page.waitForFunction(
+    () => document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
+    null, { timeout: 120000 }
+  );
 
   const runtimeConfig = await page.evaluate(async () => {
-    const response = await fetch("./model/model-config.json");
-    if (!response.ok) throw new Error("NCNN model config missing.");
+    const response = await fetch("./model/yolo-onnx-config.json");
+    if (!response.ok) throw new Error("YOLO ONNX model config missing.");
     return response.json();
   });
-  if (runtimeConfig.precision !== "FP16" || runtimeConfig.input_size !== 416)
-    throw new Error("Expected FP16 NCNN model at 416x416.");
-
-  const isolation = await page.evaluate(() => ({
-    crossOriginIsolated,
-    sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined"
-  }));
-  const initialRuntimeStatus = await page.locator("#runtime-status span").textContent();
-  const threadedRuntimeAvailable = isolation.crossOriginIsolated && isolation.sharedArrayBuffer;
-  if (!threadedRuntimeAvailable && !initialRuntimeStatus.includes("single thread"))
-    throw new Error("The app did not select its single-thread fallback when SharedArrayBuffer was unavailable.");
-  console.log(`RUNTIME_MODE ${JSON.stringify({ ...isolation, selected: threadedRuntimeAvailable ? "simd-threads" : "simd-single" })}`);
-
-  const simd = await page.evaluate(() => WebAssembly.validate(new Uint8Array([
-    0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,22,1,20,0,253,12,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,11
-  ])));
-  if (!simd) throw new Error("Chromium does not validate WebAssembly SIMD.");
+  if (runtimeConfig.input_size !== 512 ||
+      !runtimeConfig.precision.startsWith("FP16") ||
+      !runtimeConfig.output_shape.includes(56))
+    throw new Error("Expected a 512x512 FP16 YOLO pose ONNX model with 56 output channels.");
+  console.log(`YOLO_MODEL_CONFIG ${JSON.stringify(runtimeConfig)}`);
 
   await page.waitForFunction(
     () => document.querySelector("#runtime-status span")?.textContent.includes("model ready"),
@@ -237,6 +225,7 @@ try {
         worker.postMessage({ type: "frame", bitmap }, [bitmap]);
         finalResult = await resultPromise;
         const endToEndMs = performance.now() - start;
+        if (finalResult.inputSize !== 512) throw new Error("YOLO did not receive a 512x512 tensor.");
         if (!Number.isFinite(finalResult.inferenceMs) || finalResult.inferenceMs <= 0)
           throw new Error("Worker did not return a valid inference-only timing.");
         if (i >= 3) {
@@ -272,6 +261,8 @@ try {
       };
 
       return {
+        provider: finalResult.provider,
+        inputSize: finalResult.inputSize,
         warmupIterations: 3,
         measuredIterations: inferenceTimes.length,
         detections: detections.length,
