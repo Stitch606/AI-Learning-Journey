@@ -30,11 +30,36 @@ async function fetchModel(url, label) {
       return bytes;
     }
   }
-  self.postMessage({type:"progress",status:"Downloading "+label,detail:"Downloading "+label+"…"});
+  self.postMessage({type:"progress",status:"Downloading "+label,detail:"Connecting to download "+label+"…",loaded:0,total:0,model:label});
   const response = await fetch(request, {cache:"no-cache"});
   if (!response.ok) throw new Error(label+" download failed (HTTP "+response.status+").");
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const total = Number(response.headers.get("content-length")) || 0;
+  let bytes;
+  if (response.body) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    while (true) {
+      const {done,value} = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      self.postMessage({type:"progress",status:"Downloading "+label,
+        detail:label+" · "+(loaded/1048576).toFixed(2)+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB · "+Math.min(100,Math.round(loaded/total*100))+"%":" downloaded"),
+        loaded,total,model:label});
+    }
+    bytes = new Uint8Array(loaded);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk,offset); offset += chunk.byteLength; }
+  } else {
+    bytes = new Uint8Array(await response.arrayBuffer());
+    self.postMessage({type:"progress",status:"Downloaded "+label,
+      detail:label+" · "+(bytes.length/1048576).toFixed(2)+" MB",loaded:bytes.length,total:bytes.length,model:label});
+  }
   if (!bytes.length) throw new Error(label+" downloaded empty.");
+  self.postMessage({type:"progress",status:"Download complete",
+    detail:label+" · "+(bytes.length/1048576).toFixed(2)+" MB downloaded. Initializing runtime…",
+    loaded:bytes.length,total:total||bytes.length,model:label});
   try { if (cache) await cache.put(request,new Response(bytes,{headers:{"Content-Type":"application/onnx"}})); } catch {}
   return bytes;
 }
