@@ -9,6 +9,7 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 import torch
+from onnxconverter_common import float16
 from torch import nn
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,8 @@ def main():
     args = parser.parse_args()
 
     weights = MODEL_DIR / "stgcnpp_ntu60_xsub_hrnet.pth"
-    output = MODEL_DIR / "stgcnpp_ntu60.onnx"
+    fp32_output = MODEL_DIR / "stgcnpp_ntu60-fp32.onnx"
+    fp16_output = MODEL_DIR / "stgcnpp_ntu60-fp16.onnx"
     if not weights.is_file():
         raise FileNotFoundError(weights)
 
@@ -46,26 +48,31 @@ def main():
     sample[..., 2] = 0.5
 
     torch.onnx.export(
-        wrapper,
-        (sample,),
-        str(output),
-        input_names=["keypoint"],
-        output_names=["logits"],
-        opset_version=17,
-        do_constant_folding=True,
+        wrapper, (sample,), str(fp32_output),
+        input_names=["keypoint"], output_names=["logits"],
+        opset_version=17, do_constant_folding=True,
         dynamic_axes={"keypoint": {0: "batch"}, "logits": {0: "batch"}},
         dynamo=False,
     )
 
-    graph = onnx.load(str(output))
+    graph = onnx.load(str(fp32_output))
     onnx.checker.check_model(graph)
-    print(f"ONNX export: {output.stat().st_size:,} bytes")
-    print("Input: [B,1,2,100,17,3] | Output: [B,60] | Opset: 17")
+    converted = float16.convert_float_to_float16(graph, keep_io_types=True)
+    onnx.checker.check_model(converted)
+    onnx.save(converted, str(fp16_output))
+
+    print(json.dumps({
+        "fp32_bytes": fp32_output.stat().st_size,
+        "fp16_bytes": fp16_output.stat().st_size,
+        "input": "[B,1,2,100,17,3]",
+        "output": "[B,60]",
+        "precision": "FP16 weights/internal operators; FP32 input/output",
+    }, indent=2))
+    if fp16_output.stat().st_size >= fp32_output.stat().st_size:
+        raise RuntimeError("ST-GCN++ FP16 ONNX export did not reduce model size.")
 
     if args.verify:
-        session = ort.InferenceSession(
-            str(output), providers=["CPUExecutionProvider"]
-        )
+        session = ort.InferenceSession(str(fp32_output), providers=["CPUExecutionProvider"])
         rng = np.random.default_rng(606)
         test_input = rng.random((2, 1, 2, 100, 17, 3), dtype=np.float32)
         with torch.inference_mode():
@@ -74,16 +81,8 @@ def main():
         max_abs = float(np.max(np.abs(expected - actual)))
         mean_abs = float(np.mean(np.abs(expected - actual)))
         if not np.allclose(expected, actual, rtol=2e-3, atol=2e-4):
-            raise AssertionError(
-                f"ONNX/PyTorch mismatch: max_abs={max_abs:.8g}, mean_abs={mean_abs:.8g}"
-            )
-        print(json.dumps({
-            "verification": "passed",
-            "batch_size": 2,
-            "max_abs_error": max_abs,
-            "mean_abs_error": mean_abs,
-            "providers": session.get_providers(),
-        }, indent=2))
+            raise AssertionError(f"ONNX/PyTorch mismatch: max_abs={max_abs:.8g}, mean_abs={mean_abs:.8g}")
+        print(json.dumps({"fp32_verification":"passed","max_abs_error":max_abs,"mean_abs_error":mean_abs},indent=2))
 
 
 if __name__ == "__main__":
