@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101018">
   <title>YOLO26 + ST-GCN++ · Browser Action Recognition</title>
-  <link rel="stylesheet" href="./styles.css?v=2">
+  <link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
   <main class="shell">
@@ -21,6 +21,13 @@
       <p class="eyebrow">BROWSER INFERENCE</p>
       <h2>Pose estimation.<br><span>On your device.</span></h2>
       <p class="subcopy">Original two-person NTU60 model · Local device inference</p>
+    </section>
+    <section id="model-progress" class="model-progress" aria-live="polite" hidden>
+      <div class="model-progress-heading">
+        <strong>MODEL DOWNLOAD</strong>
+        <span id="model-progress-text">Waiting for download…</span>
+      </div>
+      <progress id="model-progress-bar" max="100" value="0"></progress>
     </section>
     <section class="viewer-card" aria-label="Video preview">
       <div class="scene-banner" aria-live="polite">
@@ -61,17 +68,10 @@
       <div class="info-card"><span class="info-label">ACTION MODEL</span><strong>ST-GCN++</strong><small>Original NTU60 · 2 people</small></div>
       <div class="info-card"><span class="info-label">EXECUTION</span><strong>Visitor device</strong><small>WebGPU / WASM · No inference server</small></div>
     </section>
-    <section id="model-progress" class="model-progress" aria-live="polite" hidden>
-      <div class="model-progress-heading">
-        <strong>MODEL DOWNLOAD</strong>
-        <span id="model-progress-text">Waiting for download…</span>
-      </div>
-      <progress id="model-progress-bar" max="100" value="0"></progress>
-    </section>
     <p id="notice" class="notice" role="status">Checking browser support…</p>
     <p id="perf" class="notice" role="status">Timing: waiting for the first frame</p>
     <footer>Camera frames stay on this device. The original NTU60 classifier returns one scene-level action for its two-person input.</footer>
   </main>
-  <script type="module" src="./app.js?v=10"></script>
+  <script type="module" src="./app.js?v=11"></script>
 </body>
 </html>
