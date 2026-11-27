@@ -28,7 +28,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install numpy onnx onnxruntime
+          python -m pip install numpy onnx onnxruntime onnxconverter-common
 
       - name: Export original two-person ST-GCN++ and compare outputs
         run: python browser-yolo-ncnn/stgcn/export_onnx.py --verify
@@ -36,7 +36,9 @@ jobs:
       - name: Upload verified ONNX model
         uses: actions/upload-artifact@v4
         with:
-          name: stgcnpp-ntu60-browser-onnx
-          path: browser-yolo-ncnn/model/stgcnpp_ntu60.onnx
+          name: stgcnpp-ntu60-browser-onnx-fp16-fp32
+          path: |
+            browser-yolo-ncnn/model/stgcnpp_ntu60-fp16.onnx
+            browser-yolo-ncnn/model/stgcnpp_ntu60-fp32.onnx
           if-no-files-found: error
           retention-days: 30
