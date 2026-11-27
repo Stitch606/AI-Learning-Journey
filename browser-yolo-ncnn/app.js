@@ -167,13 +167,15 @@ function launchWorker(forceSingleThread = false) {
 
     if (message.type === "progress") {
       workerStage = message.status;
-      setStatus(message.status);
       notice.textContent = message.detail;
       if (message.loaded !== undefined) {
+        const loadedMB = (message.loaded / 1048576).toFixed(2);
+        const progressLabel = message.total
+          ? `${loadedMB} / ${(message.total / 1048576).toFixed(2)} MB · ${Math.min(100, Math.round(message.loaded / message.total * 100))}%`
+          : `${loadedMB} MB downloaded`;
+        setStatus(`${message.status} · ${progressLabel}`);
         modelProgress.hidden = false;
-        modelProgressText.textContent = message.total
-          ? `${(message.loaded / 1048576).toFixed(2)} / ${(message.total / 1048576).toFixed(2)} MB · ${Math.min(100, Math.round(message.loaded / message.total * 100))}%`
-          : `${(message.loaded / 1048576).toFixed(2)} MB downloaded`;
+        modelProgressText.textContent = progressLabel;
         if (message.total) {
           modelProgressBar.max = message.total;
           modelProgressBar.value = message.loaded;
