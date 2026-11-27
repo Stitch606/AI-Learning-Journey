@@ -14,11 +14,11 @@ const perfLine = document.querySelector("#perf");
 let lastResultAt = 0;
 let fpsEma = 0;
 let lastCaptureMs = 0;
-let gpuLabel = "WebGPU: checking";
+let gpuLabel = "YOLO provider: initializing";
 if (navigator.gpu) {
   navigator.gpu.requestAdapter()
-    .then(adapter => { gpuLabel = adapter ? "WebGPU: available" : "WebGPU: no adapter"; })
-    .catch(() => { gpuLabel = "WebGPU: error"; });
+    .then(adapter => { gpuLabel = adapter ? "WebGPU adapter detected" : "WebGPU adapter unavailable"; })
+    .catch(() => { gpuLabel = "WebGPU adapter error"; });
 } else {
   gpuLabel = "WebGPU: not supported";
 }
@@ -33,7 +33,7 @@ function updatePerf(message) {
   perfLine.textContent =
     `${fpsEma.toFixed(1)} FPS · capture ${lastCaptureMs.toFixed(0)} ms · ` +
     `prep ${message.prepMs.toFixed(0)} ms · NCNN ${message.inferenceMs.toFixed(0)} ms · ` +
-    `decode ${message.decodeMs.toFixed(1)} ms · ${gpuLabel}`;
+    `decode ${message.decodeMs.toFixed(1)} ms · ${message.provider || gpuLabel}`;
 }
 
 const renderer = new PoseRenderer(canvas, {
@@ -128,7 +128,7 @@ async function prepareThreadIsolation() {
     return Boolean(window.crossOriginIsolated &&
       typeof SharedArrayBuffer !== "undefined");
   } catch (error) {
-    console.warn("Threaded NCNN unavailable; using SIMD single-thread fallback.", error);
+    console.warn("Cross-origin isolation unavailable; ONNX Runtime will use its compatible fallback.", error);
     return false;
   }
 }
@@ -146,7 +146,7 @@ let selectedVideoUrl = null;
 let selectedVideoStarted = false;
 let worker = null;
 let workerInitTimer = 0;
-let workerStage = "Starting NCNN";
+let workerStage = "Starting ONNX Runtime WebGPU";
 let usingSingleThreadFallback = false;
 
 cameraButton.disabled = false;
@@ -157,7 +157,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=5", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=6", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
@@ -175,9 +175,8 @@ function launchWorker(forceSingleThread = false) {
       workerReady = true;
       cameraButton.disabled = cameraRunning;
       videoInput.disabled = false;
-      setStatus(message.runtimeMode === "simd-threads"
-        ? `NCNN · SIMD · ${message.numThreads} CPU threads · model ready`
-        : "NCNN · SIMD · single thread · model ready", true);
+      gpuLabel = message.provider || "YOLO runtime ready";
+      setStatus(`${message.provider} · 512×512 · model ready`, true);
       if (cameraRunning) {
         if (!animationFrame) animationFrame = requestAnimationFrame(captureCameraFrame);
         notice.textContent = selectedVideoUrl
@@ -222,7 +221,7 @@ function launchWorker(forceSingleThread = false) {
       clearTimeout(workerInitTimer);
       inferenceBusy = false;
       setStatus("Model loading failed");
-      notice.textContent = "NCNN could not start: " + message.message;
+      notice.textContent = "YOLO ONNX could not start: " + message.message;
       videoInput.disabled = true;
       processPendingFrame();
     }
@@ -237,7 +236,7 @@ function launchWorker(forceSingleThread = false) {
     videoInput.disabled = true;
     inferenceBusy = false;
     setStatus("Runtime error");
-    notice.textContent = event.message || "Could not load the NCNN WebAssembly runtime.";
+    notice.textContent = event.message || "Could not load the YOLO ONNX runtime.";
   });
 
   workerStage = "Starting NCNN";
@@ -265,7 +264,7 @@ function retrySingleThread(reason) {
   usingSingleThreadFallback = true;
   clearTimeout(workerInitTimer);
   videoInput.disabled = true;
-  setStatus("Retrying with single-thread NCNN");
+  setStatus("Retrying compatible ONNX runtime");
   notice.textContent = reason + " Switching to the compatible single-thread runtime…";
   launchWorker(true);
 }
@@ -487,10 +486,10 @@ window.addEventListener("pagehide", () => {
 });
 
 if (!supportsWasmSimd()) {
-  setStatus("SIMD unsupported");
-  notice.textContent = "Camera preview is available, but this browser does not support WebAssembly SIMD, so local pose inference cannot start.";
+  setStatus("Runtime unavailable");
+  notice.textContent = "Camera preview is available, but this browser cannot start the ONNX inference runtime.";
 } else {
-  setStatus("Loading NCNN model");
+  setStatus("Loading YOLO ONNX model");
   notice.textContent = "Camera is available immediately. Pose inference starts when the local model is ready.";
   Promise.race([
     prepareThreadIsolation(),
