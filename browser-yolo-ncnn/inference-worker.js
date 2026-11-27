@@ -8,6 +8,7 @@ const CACHE_NAME = "yolo26n-pose-onnx-fp16-512-v1";
 const SCORE_THRESHOLD = 0.30;
 const NMS_THRESHOLD = 0.45;
 let session = null;
+let modelBytes = null;
 let provider = "uninitialized";
 let inputName = null;
 let outputName = null;
@@ -54,20 +55,20 @@ async function initialize() {
   canvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
   context = canvas.getContext("2d", {willReadFrequently:true});
 
-  let bytes = await fetchModel(MODEL_URL, "YOLO26n-Pose FP16 512");
+  modelBytes = await fetchModel(MODEL_URL, "YOLO26n-Pose FP16 512");
   if (self.navigator.gpu) {
     try {
       const adapter = await self.navigator.gpu.requestAdapter({powerPreference:"high-performance"});
       if (!adapter) throw new Error("No WebGPU adapter was returned.");
-      session = await createSession(bytes, "webgpu");
+      session = await createSession(modelBytes, "webgpu");
       provider = "WebGPU GPU · FP16";
     } catch (error) {
       self.postMessage({type:"progress",status:"WebGPU unavailable",detail:"WebGPU FP16 could not initialize ("+error.message+"). Switching to the FP32 compatibility model."});
     }
   }
   if (!session) {
-    bytes = await fetchModel(MODEL_FP32_URL, "YOLO26n-Pose FP32 compatibility");
-    session = await createSession(bytes, "wasm");
+    modelBytes = await fetchModel(MODEL_FP32_URL, "YOLO26n-Pose FP32 compatibility");
+    session = await createSession(modelBytes, "wasm");
     provider = "WASM CPU · FP32 fallback";
   }
   inputName = session.inputNames[0];
@@ -162,13 +163,28 @@ function preprocess(bitmap) {
   return {input,sourceWidth,sourceHeight,scale,padX,padY};
 }
 
+async function fallbackToWasm(reason) {
+  self.postMessage({type:"progress",status:"Switching to CPU compatibility model",detail:"WebGPU inference failed ("+reason+"). Loading the FP32 compatibility model."});
+  try { await session?.release(); } catch {}
+  modelBytes = await fetchModel(MODEL_FP32_URL, "YOLO26n-Pose FP32 compatibility");
+  session = await createSession(modelBytes, "wasm");
+  provider = "WASM CPU · FP32 fallback";
+}
+
 async function runFrame(bitmap) {
   const prepStart=performance.now();
   const prep=preprocess(bitmap);
   const prepMs=performance.now()-prepStart;
   const inferenceStart=performance.now();
   const feeds={[inputName]:new ort.Tensor("float32",prep.input,[1,3,INPUT_SIZE,INPUT_SIZE])};
-  const outputs=await session.run(feeds);
+  let outputs;
+  try {
+    outputs=await session.run(feeds);
+  } catch(error) {
+    if (!provider.startsWith("WebGPU")) throw error;
+    await fallbackToWasm(error.message);
+    outputs=await session.run(feeds);
+  }
   const inferenceMs=performance.now()-inferenceStart;
   const decodeStart=performance.now();
   const detections=decodeOutput(outputs[outputName],prep.sourceWidth,prep.sourceHeight,prep.scale,prep.padX,prep.padY);
