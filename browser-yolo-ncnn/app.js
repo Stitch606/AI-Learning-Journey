@@ -32,7 +32,7 @@ function updatePerf(message) {
   lastResultAt = now;
   perfLine.textContent =
     `${fpsEma.toFixed(1)} FPS · capture ${lastCaptureMs.toFixed(0)} ms · ` +
-    `prep ${message.prepMs.toFixed(0)} ms · NCNN ${message.inferenceMs.toFixed(0)} ms · ` +
+    `prep ${message.prepMs.toFixed(0)} ms · YOLO ${message.inferenceMs.toFixed(0)} ms · ` +
     `decode ${message.decodeMs.toFixed(1)} ms · ${message.provider || gpuLabel}`;
 }
 
@@ -239,7 +239,7 @@ function launchWorker(forceSingleThread = false) {
     notice.textContent = event.message || "Could not load the YOLO ONNX runtime.";
   });
 
-  workerStage = "Starting NCNN";
+  workerStage = "Starting ONNX Runtime WebGPU";
   armWorkerTimeout();
   worker.postMessage({ type: "init", forceSingleThread });
 }
@@ -485,25 +485,20 @@ window.addEventListener("pagehide", () => {
   if (selectedVideoUrl) URL.revokeObjectURL(selectedVideoUrl);
 });
 
-if (!supportsWasmSimd()) {
-  setStatus("Runtime unavailable");
-  notice.textContent = "Camera preview is available, but this browser cannot start the ONNX inference runtime.";
-} else {
-  setStatus("Loading YOLO ONNX model");
-  notice.textContent = "Camera is available immediately. Pose inference starts when the local model is ready.";
-  Promise.race([
-    prepareThreadIsolation(),
-    new Promise(resolve => setTimeout(() => resolve(false), 8000))
-  ]).then(ready => {
-    threadIsolationReady = ready;
-    window.__ncnnIsolationReady = ready;
-    usingSingleThreadFallback = !ready;
-    launchWorker(!ready);
-  }).catch(error => {
-    console.warn("Thread isolation setup failed; using single-thread NCNN.", error);
-    threadIsolationReady = false;
-    window.__ncnnIsolationReady = false;
-    usingSingleThreadFallback = true;
-    launchWorker(true);
-  });
-}
+setStatus("Loading YOLO ONNX model");
+notice.textContent = "Preparing the FP16 WebGPU model. A FP32 WASM fallback is available if WebGPU cannot initialize.";
+Promise.race([
+  prepareThreadIsolation(),
+  new Promise(resolve => setTimeout(() => resolve(false), 8000))
+]).then(ready => {
+  threadIsolationReady = ready;
+  window.__ncnnIsolationReady = ready;
+  usingSingleThreadFallback = !ready;
+  launchWorker(!ready);
+}).catch(error => {
+  console.warn("Thread isolation setup failed; using ONNX Runtime compatibility fallback.", error);
+  threadIsolationReady = false;
+  window.__ncnnIsolationReady = false;
+  usingSingleThreadFallback = true;
+  launchWorker(true);
+});
