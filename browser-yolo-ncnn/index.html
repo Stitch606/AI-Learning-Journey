@@ -15,7 +15,7 @@
         <p class="eyebrow">ON-DEVICE COMPUTER VISION</p>
         <h1>YOLO <span>POSE</span> + ST-GCN++</h1>
       </div>
-      <span class="engine-tag">NCNN · WebGPU / WASM</span>
+      <span class="engine-tag">ONNX Runtime · WebGPU / WASM</span>
     </header>
     <section class="intro">
       <p class="eyebrow">BROWSER INFERENCE</p>
@@ -57,7 +57,7 @@
     </section>
     <section class="info-grid">
       <div class="info-card"><span class="info-label">MODEL</span><strong>YOLO26n-Pose</strong><small>Nano · 17 COCO keypoints</small></div>
-      <div class="info-card"><span class="info-label">PRECISION</span><strong>FP16</strong><small>Half-precision weights</small></div>
+      <div class="info-card"><span class="info-label">PRECISION</span><strong>FP16</strong><small>WebGPU model weights</small></div>
       <div class="info-card"><span class="info-label">ACTION MODEL</span><strong>ST-GCN++</strong><small>Original NTU60 · 2 people</small></div>
       <div class="info-card"><span class="info-label">EXECUTION</span><strong>Visitor device</strong><small>WebGPU / WASM · No inference server</small></div>
     </section>
@@ -65,6 +65,6 @@
     <p id="perf" class="notice" role="status">Timing: waiting for the first frame</p>
     <footer>Camera frames stay on this device. The original NTU60 classifier returns one scene-level action for its two-person input.</footer>
   </main>
-  <script type="module" src="./app.js?v=8"></script>
+  <script type="module" src="./app.js?v=9"></script>
 </body>
 </html>
