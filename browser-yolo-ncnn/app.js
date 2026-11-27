@@ -189,6 +189,10 @@ function launchWorker(forceSingleThread = false) {
     }
 
     if (message.type === "result") {
+      if (message.provider && message.provider !== gpuLabel) {
+        gpuLabel = message.provider;
+        setStatus(`${message.provider} · 512×512 · model ready`, true);
+      }
       latestDetections = message.detections;
       latestWidth = message.sourceWidth;
       latestHeight = message.sourceHeight;
