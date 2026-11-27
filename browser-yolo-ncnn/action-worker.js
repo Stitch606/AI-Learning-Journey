@@ -137,7 +137,7 @@ async function init() {
   ort = ortModule;
   self.postMessage({type:"progress",message:"Loading original NTU60 ST-GCN++"});
   labels=(await (await fetch(LABELS_URL, {cache:"default"})).text()).trim().split(/\r?\n/);
-  let modelBytes = await loadActionModel(MODEL_FP16_URL, "ST-GCN++ FP16");
+  modelBytes = await loadActionModel(MODEL_FP16_URL, "ST-GCN++ FP16");
   ort.env.logLevel="error";
   ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
   ort.env.wasm.numThreads=self.crossOriginIsolated ? Math.max(1,Math.min(self.navigator.hardwareConcurrency||2,4)) : 1;
