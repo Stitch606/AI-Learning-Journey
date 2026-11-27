@@ -24,7 +24,9 @@ def _shape(value_info):
     ]
 
 
-def _assert_model_contract(\n    graph: onnx.ModelProto, label: str, *, require_fp16: bool = False\n) -> dict:
+def _assert_model_contract(
+    graph: onnx.ModelProto, label: str, *, require_fp16: bool = False
+) -> dict:
     onnx.checker.check_model(graph)
     if not graph.graph.input or not graph.graph.output:
         raise RuntimeError(f"{label} has no graph input/output.")
