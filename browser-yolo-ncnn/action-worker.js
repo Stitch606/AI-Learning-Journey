@@ -1,3 +1,4 @@
+import { downloadBytes } from "./resumable-download.js";
 let ort = null;
 
 const MODEL_FP16_URL = new URL("./model/stgcnpp_ntu60-fp16.onnx", import.meta.url).href;
@@ -98,32 +99,17 @@ async function loadActionModel(modelUrl, label) {
   }
 
   self.postMessage({type:"progress",message:"Downloading "+label});
-  const response = await fetch(request, {cache:"default"});
-  if (!response.ok) throw new Error(label+" download failed (HTTP "+response.status+").");
-  let bytes;
-  if (!response.body) {
-    bytes = new Uint8Array(await response.arrayBuffer());
-  } else {
-    const reader = response.body.getReader(), chunks = [];
-    const total = Number(response.headers.get("content-length")) || 0;
-    let loaded = 0;
-    while (true) {
-      const {done,value} = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.byteLength;
+  const {bytes} = await downloadBytes(request.url, {
+    label,
+    onProgress: ({loaded,total,note}) => {
       const mb = (loaded/1048576).toFixed(2);
       const pct = total ? " · "+Math.min(100,Math.round(loaded/total*100))+"%" : "";
-      self.postMessage({type:"progress",message:"ST-GCN++ "+mb+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB":"")+pct});
+      self.postMessage({type:"progress",message: note || "ST-GCN++ "+mb+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB":"")+pct});
     }
-    bytes = new Uint8Array(loaded);
-    let offset=0;
-    for (const chunk of chunks) { bytes.set(chunk,offset); offset+=chunk.byteLength; }
-  }
-  if (!bytes.length) throw new Error(label+" downloaded as an empty file.");
+  });
   try {
     if (cache) await cache.put(request,new Response(bytes,{
-      headers:{"Content-Type":response.headers.get("content-type")||"application/octet-stream"}
+      headers:{"Content-Type":"application/onnx"}
     }));
   } catch {
     self.postMessage({type:"progress",message:"Weights loaded; persistent cache unavailable on this browser."});
@@ -137,17 +123,19 @@ async function init() {
   ort = ortModule;
   self.postMessage({type:"progress",message:"Loading original NTU60 ST-GCN++"});
   labels=(await (await fetch(LABELS_URL, {cache:"default"})).text()).trim().split(/\r?\n/);
-  modelBytes = await loadActionModel(MODEL_FP16_URL, "ST-GCN++ FP16");
   ort.env.logLevel="error";
   ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
   ort.env.wasm.numThreads=self.crossOriginIsolated ? Math.max(1,Math.min(self.navigator.hardwareConcurrency||2,4)) : 1;
   try {
+    // Look for a GPU before downloading: without WebGPU the FP16 file would be wasted.
     if(!self.navigator.gpu) throw new Error("WebGPU unavailable");
     const adapter = await self.navigator.gpu.requestAdapter({powerPreference:"high-performance"});
     if(!adapter) throw new Error("No WebGPU adapter was returned.");
+    modelBytes = await loadActionModel(MODEL_FP16_URL, "ST-GCN++ FP16");
     session=await ort.InferenceSession.create(modelBytes,{executionProviders:["webgpu"],graphOptimizationLevel:"all"});
     provider="WebGPU GPU · FP16";
   } catch(e) {
+    if (e.stage === "download") throw e;
     self.postMessage({type:"progress",message:"ST-GCN++ WebGPU FP16 unavailable ("+e.message+"); loading FP32 CPU compatibility model"});
     modelBytes = await loadActionModel(MODEL_FP32_URL, "ST-GCN++ FP32 compatibility");
     session=await ort.InferenceSession.create(modelBytes,{executionProviders:["wasm"],graphOptimizationLevel:"all"});

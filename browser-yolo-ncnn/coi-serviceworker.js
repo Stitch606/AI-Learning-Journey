@@ -10,6 +10,9 @@ self.addEventListener("fetch", event => {
   const request = event.request;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Model files need no isolation headers. Streaming them through the service
+  // worker only adds a fragile hop that can stall a long download.
+  if (/\.(?:onnx|pth|bin|param)$/.test(url.pathname)) return;
 
   event.respondWith((async () => {
     const runtimeAsset = request.method === "GET" &&

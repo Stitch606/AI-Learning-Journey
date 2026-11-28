@@ -62,7 +62,7 @@ function ensureActionWorker() {
   if (actionWorker || actionWorkerStarting) return;
   actionWorkerStarting = true;
   actionStatus.textContent = "Loading action model on demand";
-  actionWorker = new Worker("./action-worker.js?v=2", { type: "module" });
+  actionWorker = new Worker("./action-worker.js?v=3", { type: "module" });
   actionWorker.addEventListener("message", event => {
     const message = event.data;
     if (message.type === "progress") actionStatus.textContent = message.message;
@@ -160,7 +160,7 @@ function launchWorker(forceSingleThread = false) {
   worker?.terminate();
   workerReady = false;
   inferenceBusy = false;
-  worker = new Worker("./inference-worker.js?v=7", { type: "module" });
+  worker = new Worker("./inference-worker.js?v=8", { type: "module" });
 
   worker.addEventListener("message", event => {
     const message = event.data;
@@ -247,7 +247,7 @@ function launchWorker(forceSingleThread = false) {
     }
 
     if (message.type === "error") {
-      if (!usingSingleThreadFallback && message.stage !== "frame" && message.stage !== "model") {
+      if (!usingSingleThreadFallback && message.stage !== "frame" && message.stage !== "model" && message.stage !== "download") {
         retrySingleThread(message.message);
         return;
       }

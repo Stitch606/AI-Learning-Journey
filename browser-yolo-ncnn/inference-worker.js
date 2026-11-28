@@ -1,4 +1,5 @@
 import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.mjs";
+import { downloadBytes } from "./resumable-download.js";
 
 const INPUT_SIZE = 512;
 const VALUES_PER_DETECTION = 56;
@@ -31,32 +32,12 @@ async function fetchModel(url, label) {
     }
   }
   self.postMessage({type:"progress",status:"Downloading "+label,detail:"Connecting to download "+label+"…",loaded:0,total:0,model:label});
-  const response = await fetch(request, {cache:"no-cache"});
-  if (!response.ok) throw new Error(label+" download failed (HTTP "+response.status+").");
-  const total = Number(response.headers.get("content-length")) || 0;
-  let bytes;
-  if (response.body) {
-    const reader = response.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-    while (true) {
-      const {done,value} = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.byteLength;
-      self.postMessage({type:"progress",status:"Downloading "+label,
-        detail:label+" · "+(loaded/1048576).toFixed(2)+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB · "+Math.min(100,Math.round(loaded/total*100))+"%":" downloaded"),
-        loaded,total,model:label});
-    }
-    bytes = new Uint8Array(loaded);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk,offset); offset += chunk.byteLength; }
-  } else {
-    bytes = new Uint8Array(await response.arrayBuffer());
-    self.postMessage({type:"progress",status:"Downloaded "+label,
-      detail:label+" · "+(bytes.length/1048576).toFixed(2)+" MB",loaded:bytes.length,total:bytes.length,model:label});
-  }
-  if (!bytes.length) throw new Error(label+" downloaded empty.");
+  const {bytes,total} = await downloadBytes(request.url, {
+    label,
+    onProgress: ({loaded,total,note}) => self.postMessage({type:"progress",status:"Downloading "+label,
+      detail: note || label+" · "+(loaded/1048576).toFixed(2)+" MB"+(total?" / "+(total/1048576).toFixed(2)+" MB · "+Math.min(100,Math.round(loaded/total*100))+"%":" downloaded"),
+      loaded,total,model:label})
+  });
   self.postMessage({type:"progress",status:"Download complete",
     detail:label+" · "+(bytes.length/1048576).toFixed(2)+" MB downloaded. Initializing runtime…",
     loaded:bytes.length,total:total||bytes.length,model:label});
@@ -80,14 +61,18 @@ async function initialize() {
   canvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
   context = canvas.getContext("2d", {willReadFrequently:true});
 
-  modelBytes = await fetchModel(MODEL_URL, "YOLO26n-Pose FP16 512");
+  // Look for a GPU first: without WebGPU the FP16 file would be downloaded for nothing.
+  let adapter = null;
   if (self.navigator.gpu) {
+    try { adapter = await self.navigator.gpu.requestAdapter({powerPreference:"high-performance"}); } catch {}
+  }
+  if (adapter) {
     try {
-      const adapter = await self.navigator.gpu.requestAdapter({powerPreference:"high-performance"});
-      if (!adapter) throw new Error("No WebGPU adapter was returned.");
+      modelBytes = await fetchModel(MODEL_URL, "YOLO26n-Pose FP16 512");
       session = await createSession(modelBytes, "webgpu");
       provider = "WebGPU GPU · FP16";
     } catch (error) {
+      if (error.stage === "download") throw error;
       self.postMessage({type:"progress",status:"WebGPU unavailable",detail:"WebGPU FP16 could not initialize ("+error.message+"). Switching to the FP32 compatibility model."});
     }
   }
@@ -220,7 +205,7 @@ async function runFrame(bitmap) {
 self.onmessage=async ({data:message})=>{
   if(message.type==="init") {
     try {await initialize();}
-    catch(error) {self.postMessage({type:"error",stage:"init",message:error.message});}
+    catch(error) {self.postMessage({type:"error",stage:error.stage||"init",message:error.message});}
     return;
   }
   if(message.type==="frame"&&session) {
